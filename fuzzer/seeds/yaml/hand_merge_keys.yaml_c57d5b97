@@ -1,0 +1,18 @@
+áªdefaults: &defaults
+  adapter: postgres
+  host: localhost
+dev: &dev
+  database: dev
+  <<: *defaults
+over:
+  <<: [*dev, *defaults]
+  host: override
+tagged:
+  !!merge <<: *defaults
+nested:
+  <<: {a: 1, b: 2}
+  c: 3
+bad_merge:
+  <<: [1, 2]
+scalar_merge:
+  <<: plain

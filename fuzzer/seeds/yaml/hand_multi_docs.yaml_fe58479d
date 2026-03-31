@@ -1,0 +1,15 @@
+‰;þ---
+a: 1
+...
+---
+- 2
+---
+plain scalar doc
+--- |
+  literal doc
+--- >
+  folded doc
+---
+...
+--- !!str
+...

@@ -1,0 +1,13 @@
+Ç	à{a: [b, c, {d: e}], ? complex : key, "q": 'single '' quote', [x, y]: z, {m: n}: o, : empty, implicit: , ,}
+---
+[a, b: c, ? d : e, {f: g}, [h], "i": j, k :l, ]
+---
+{ a
+ : b,
+  c:
+   d }
+---
+[ 'multi
+  line', "dq
+  line \
+  cont" ]

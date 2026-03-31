@@ -1,0 +1,22 @@
+œí¡ê# top comment
+%YAML 1.2
+# before doc
+--- # doc start comment
+# above key
+key: value # trailing
+# between
+seq: # after seq key
+  # before item
+  - a # item
+  # after item
+  - b
+map:
+  k: v   # trailing map
+  # bottom of map
+flow: [a, # in flow
+  b]
+lit: | # after indicator
+  text
+# end of doc
+... # after doc end
+# final

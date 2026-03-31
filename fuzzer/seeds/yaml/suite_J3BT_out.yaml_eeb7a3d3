@@ -1,0 +1,5 @@
+–ô[Equoted: "Quoted \t"
+block: |
+  void main() {
+  	printf("Hello, world!\n");
+  }

@@ -1,0 +1,6 @@
+I’Y sequence: !!seq
+- entry
+- !!seq
+ - nested
+mapping: !!map
+ foo: bar

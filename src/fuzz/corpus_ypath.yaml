@@ -1,0 +1,30 @@
+
+# ============================================================================
+# Appended to corpus.yaml for the YPATH-aliases fixture only
+# (corpus_ypath_document(), fuzz_utils.h): parsed with FYPCF_YPATH_ALIASES and
+# NOT resolved, so the alias nodes stay in the tree and every ypath walk over
+# it goes through the alias-following code in fy-walk.c.
+#
+# These aliases are ypath expressions, which FYPCF_RESOLVE_DOCUMENT cannot
+# resolve (*../x is not even a valid alias there) - keep them out of
+# corpus.yaml. Recursive ones are fine here: nothing resolves the fixture as a
+# whole, and fy-walk.c's traversal counter catches the loop.
+# ============================================================================
+ypath_aliases:
+  to_anchor_path: *anchor_map/a
+  to_anchor_deep: *anchor_block/deeper/key
+  absolute: */merge_defaults/port
+  to_seq_item: */anchors/seq/1
+  parent_rel: *../to_anchor_path
+  sibling: *../absolute
+  multi_hop: */ypath_aliases/sibling
+  to_alias: */aliases/to_map
+  every_key: */bulk/0/*
+  recursive: */deep/**
+  self_loop: */ypath_aliases/self_loop
+  loop_a: */ypath_aliases/loop_b
+  loop_b: */ypath_aliases/loop_a
+  dangling: */no/such/node
+  in_seq: [*../absolute, */anchors/map/b]
+  in_map: {v: */merge_overrides/pool}
+  */ypath_aliases/absolute : alias as a key
