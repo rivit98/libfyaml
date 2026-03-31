@@ -1,0 +1,1006 @@
+/*
+ * struct flags_t and everything needed to derive one from a fuzzer-supplied
+ * seed (setup_flags()), and to print one back out as a C initializer for
+ * crash reproducers (flags_to_struct_string()).
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <inttypes.h>
+#include <stdarg.h>
+#include <assert.h>
+
+#include <libfyaml.h>
+#include <libfyaml/libfyaml-reflection.h>
+#include <libfyaml/libfyaml-generic.h>
+
+// https://stackoverflow.com/questions/33010010/how-to-generate-random-64-bit-unsigned-integer-in-c
+#define IMAX_BITS(m) ((m)/((m)%255+1) / 255%255*8 + 7-86/((m)%255+12))
+#define RAND_MAX_WIDTH IMAX_BITS(RAND_MAX)
+_Static_assert((RAND_MAX & (RAND_MAX + 1u)) == 0, "RAND_MAX not a Mersenne number");
+
+uint64_t rand64(void) {
+  uint64_t r = 0;
+  for (int i = 0; i < 64; i += RAND_MAX_WIDTH) {
+    r <<= RAND_MAX_WIDTH;
+    r ^= (unsigned) rand();
+  }
+  return r;
+}
+
+bool verbose = false;
+
+const char *tc_filter = NULL;
+bool tc_filter_matched = false;
+
+struct flags_t {
+  enum fy_parse_cfg_flags parse_flags;
+  enum fy_emitter_cfg_flags emitter_flags;
+  enum fy_emitter_xcfg_flags extended_emitter_flags;
+  enum fy_node_walk_flags node_walk_flags;
+  enum fy_path_parse_cfg_flags path_parse_flags;
+  enum fy_path_exec_cfg_flags path_exec_flags;
+  enum fy_generic_document_builder_flags generic_doc_builder_flags;
+  enum fy_gb_cfg_flags generic_builder_flags;
+  unsigned int allocator_recipe;
+  enum fy_node_style node_style;
+  char *primitive_type;
+  enum fy_type_info_flags type_info_flags;
+  uint64_t cgen_flag;
+  /*
+   * The nth malloc()/calloc()/realloc() of each test case returns NULL, 0 =
+   * never (fuzz_alloc_fail.h). Uncomment both lines to turn it on: everything
+   * else that touches the field is keyed off the #define.
+   */
+#define FLAGS_HAVE_ALLOC_FAIL_NTH
+  unsigned int alloc_fail_nth;
+};
+
+#ifdef FLAGS_HAVE_ALLOC_FAIL_NTH
+#define FLAGS_ALLOC_FAIL_NTH(flags) ((flags)->alloc_fail_nth)
+#else
+#define FLAGS_ALLOC_FAIL_NTH(flags) ((void)(flags), 0u)
+#endif
+
+#define array_elements(x) (sizeof(x) / sizeof(x[0]))
+
+void __print__flags(uint64_t flags, uint64_t *flags_vals, const char** flags_desc, size_t len, const char *prefix) {
+  static char buffer[0x4000];
+  buffer[0] = '\0';
+
+  for (size_t i = 0; i < len; i++)
+  {
+    if(flags & flags_vals[i]) {
+      if(buffer[0] != '\0') {
+        strcat(buffer, " | ");
+      }
+      strcat(buffer, flags_desc[i]);
+    }
+  }
+
+  if(buffer[0] == '\0') {
+    strcat(buffer, "None");
+  }
+
+  printf("%s: 0x%" PRIx64 " %s\n", prefix, (uint64_t)flags, buffer);
+}
+
+/*
+ * NOTE: FYPCF_DEFAULT_VERSION_* and FYPCF_JSON_* are NOT independent bits -
+ * they are enum values packed into their own masked sub-fields of the flags
+ * word (see FYPCF_DEFAULT_VERSION_SHIFT/MASK and FYPCF_JSON_SHIFT/MASK in
+ * libfyaml-core.h). OR-ing more than one value from the same group together
+ * produces a value outside the defined enum range. They are therefore kept
+ * out of this "independent bits" array and resolved separately below, by
+ * picking exactly one value per group.
+ */
+const char *fy_parse_cfg_flags__desc[] = {
+	"FYPCF_QUIET",
+	"FYPCF_COLLECT_DIAG",
+	"FYPCF_RESOLVE_DOCUMENT",
+	"FYPCF_DISABLE_MMAP_OPT",
+	"FYPCF_DISABLE_RECYCLING",
+	"FYPCF_KEEP_COMMENTS",
+	"FYPCF_DISABLE_DEPTH_LIMIT",
+	"FYPCF_DISABLE_ACCELERATORS",
+	"FYPCF_DISABLE_BUFFERING",
+	"FYPCF_SLOPPY_FLOW_INDENTATION",
+	"FYPCF_PREFER_RECURSIVE",
+	"FYPCF_YPATH_ALIASES",
+	"FYPCF_ALLOW_DUPLICATE_KEYS",
+	"FYPCF_CREATE_MARKERS",
+	"FYPCF_KEEP_STYLE",
+	"FYPCF_RELAXED_FLOW_DOC",
+	"FYPCF_KEEP_ANCHORS",
+	"FYPCF_ENABLE_CACHE",
+};
+
+uint64_t fy_parse_cfg_flags__vals[] = {
+	FYPCF_QUIET,
+	FYPCF_COLLECT_DIAG,
+	FYPCF_RESOLVE_DOCUMENT,
+	FYPCF_DISABLE_MMAP_OPT,
+	FYPCF_DISABLE_RECYCLING,
+	FYPCF_KEEP_COMMENTS,
+	0,	/* FYPCF_DISABLE_DEPTH_LIMIT: needs an enlarged stack, so it only finds stack overflows; slot kept so seeds do not remap */
+	FYPCF_DISABLE_ACCELERATORS,
+	FYPCF_DISABLE_BUFFERING,
+	FYPCF_SLOPPY_FLOW_INDENTATION,
+	FYPCF_PREFER_RECURSIVE,
+	FYPCF_YPATH_ALIASES,
+	FYPCF_ALLOW_DUPLICATE_KEYS,
+	FYPCF_CREATE_MARKERS,
+	FYPCF_KEEP_STYLE,
+	FYPCF_RELAXED_FLOW_DOC,
+	FYPCF_KEEP_ANCHORS,
+	FYPCF_ENABLE_CACHE,
+};
+
+static_assert(array_elements(fy_parse_cfg_flags__desc) == array_elements(fy_parse_cfg_flags__vals));
+
+/* FYPCF_DEFAULT_VERSION_* - masked sub-field, pick exactly one value */
+const char *fy_parse_cfg_default_version_group__desc[] = {
+	"FYPCF_DEFAULT_VERSION_AUTO",
+	"FYPCF_DEFAULT_VERSION_1_1",
+	"FYPCF_DEFAULT_VERSION_1_2",
+	"FYPCF_DEFAULT_VERSION_1_3",
+};
+
+uint64_t fy_parse_cfg_default_version_group__vals[] = {
+	FYPCF_DEFAULT_VERSION_AUTO,
+	FYPCF_DEFAULT_VERSION_1_1,
+	FYPCF_DEFAULT_VERSION_1_2,
+	FYPCF_DEFAULT_VERSION_1_3,
+};
+
+static_assert(array_elements(fy_parse_cfg_default_version_group__desc) == array_elements(fy_parse_cfg_default_version_group__vals));
+
+/* FYPCF_JSON_* - masked sub-field, pick exactly one value */
+const char *fy_parse_cfg_json_group__desc[] = {
+	"FYPCF_JSON_AUTO",
+	"FYPCF_JSON_NONE",
+	"FYPCF_JSON_FORCE",
+};
+
+uint64_t fy_parse_cfg_json_group__vals[] = {
+	FYPCF_JSON_AUTO,
+	FYPCF_JSON_NONE,
+	FYPCF_JSON_FORCE,
+};
+
+static_assert(array_elements(fy_parse_cfg_json_group__desc) == array_elements(fy_parse_cfg_json_group__vals));
+
+const char *fy_node_walk_flags__desc[] = {
+    "FYNWF_DONT_FOLLOW",
+    "FYNWF_FOLLOW",
+    "FYNWF_PTR_YAML",
+    "FYNWF_PTR_JSON",
+    "FYNWF_PTR_RELJSON",
+    "FYNWF_PTR_YPATH",
+    "FYNWF_URI_ENCODED",
+    "FYNWF_MAXDEPTH_DEFAULT",
+    "FYNWF_MARKER_DEFAULT",
+    "FYNWF_PTR_DEFAULT"
+};
+
+uint64_t fy_node_walk_flags__vals[] = {
+    FYNWF_DONT_FOLLOW,
+    FYNWF_FOLLOW,
+    FYNWF_PTR_YAML,
+    FYNWF_PTR_JSON,
+    FYNWF_PTR_RELJSON,
+    FYNWF_PTR_YPATH,
+    FYNWF_URI_ENCODED,
+    FYNWF_MAXDEPTH_DEFAULT,
+    FYNWF_MARKER_DEFAULT,
+    FYNWF_PTR_DEFAULT
+};
+
+static_assert(array_elements(fy_node_walk_flags__desc) == array_elements(fy_node_walk_flags__vals));
+
+
+/*
+ * NOTE: FYECF_INDENT_*, FYECF_WIDTH_*, FYECF_MODE_*, FYECF_DOC_START_MARK_*,
+ * FYECF_DOC_END_MARK_*, FYECF_VERSION_DIR_* and FYECF_TAG_DIR_* are NOT
+ * independent bits - each group is an enum packed into its own masked
+ * sub-field of the flags word (FYECF_*_SHIFT/MASK in libfyaml-core.h).
+ * OR-ing more than one value from the same group together produces a value
+ * outside the defined enum range, so they are resolved separately below by
+ * picking exactly one value per group, instead of living in this
+ * independent-bits array.
+ */
+const char *fy_emitter_cfg_flags__desc[] = {
+    "FYECF_SORT_KEYS",
+    "FYECF_OUTPUT_COMMENTS",
+    "FYECF_STRIP_LABELS",
+    "FYECF_STRIP_TAGS",
+    "FYECF_STRIP_DOC",
+    "FYECF_NO_ENDING_NEWLINE",
+    "FYECF_STRIP_EMPTY_KV",
+    "FYECF_EXTENDED_CFG",
+};
+
+uint64_t fy_emitter_cfg_flags__vals[] = {
+    FYECF_SORT_KEYS,
+    FYECF_OUTPUT_COMMENTS,
+    FYECF_STRIP_LABELS,
+    FYECF_STRIP_TAGS,
+    FYECF_STRIP_DOC,
+    FYECF_NO_ENDING_NEWLINE,
+    FYECF_STRIP_EMPTY_KV,
+    FYECF_EXTENDED_CFG,
+};
+
+static_assert(array_elements(fy_emitter_cfg_flags__desc) == array_elements(fy_emitter_cfg_flags__vals));
+
+const char *fy_emitter_cfg_indent_group__desc[] = { "FYECF_INDENT_DEFAULT" };
+uint64_t fy_emitter_cfg_indent_group__vals[] = { FYECF_INDENT_DEFAULT };
+static_assert(array_elements(fy_emitter_cfg_indent_group__desc) == array_elements(fy_emitter_cfg_indent_group__vals));
+
+const char *fy_emitter_cfg_width_group__desc[] = {
+    "FYECF_WIDTH_DEFAULT", "FYECF_WIDTH_80", "FYECF_WIDTH_132", "FYECF_WIDTH_INF",
+};
+uint64_t fy_emitter_cfg_width_group__vals[] = {
+    FYECF_WIDTH_DEFAULT, FYECF_WIDTH_80, FYECF_WIDTH_132, FYECF_WIDTH_INF,
+};
+static_assert(array_elements(fy_emitter_cfg_width_group__desc) == array_elements(fy_emitter_cfg_width_group__vals));
+
+const char *fy_emitter_cfg_mode_group__desc[] = {
+    "FYECF_MODE_ORIGINAL", "FYECF_MODE_BLOCK", "FYECF_MODE_FLOW", "FYECF_MODE_FLOW_ONELINE",
+    "FYECF_MODE_JSON", "FYECF_MODE_JSON_TP", "FYECF_MODE_JSON_ONELINE", "FYECF_MODE_DEJSON",
+    "FYECF_MODE_PRETTY", "FYECF_MODE_MANUAL", "FYECF_MODE_FLOW_COMPACT", "FYECF_MODE_JSON_COMPACT",
+};
+uint64_t fy_emitter_cfg_mode_group__vals[] = {
+    FYECF_MODE_ORIGINAL, FYECF_MODE_BLOCK, FYECF_MODE_FLOW, FYECF_MODE_FLOW_ONELINE,
+    FYECF_MODE_JSON, FYECF_MODE_JSON_TP, FYECF_MODE_JSON_ONELINE, FYECF_MODE_DEJSON,
+    FYECF_MODE_PRETTY, FYECF_MODE_MANUAL, FYECF_MODE_FLOW_COMPACT, FYECF_MODE_JSON_COMPACT,
+};
+static_assert(array_elements(fy_emitter_cfg_mode_group__desc) == array_elements(fy_emitter_cfg_mode_group__vals));
+
+const char *fy_emitter_cfg_doc_start_mark_group__desc[] = {
+    "FYECF_DOC_START_MARK_AUTO", "FYECF_DOC_START_MARK_OFF", "FYECF_DOC_START_MARK_ON",
+};
+uint64_t fy_emitter_cfg_doc_start_mark_group__vals[] = {
+    FYECF_DOC_START_MARK_AUTO, FYECF_DOC_START_MARK_OFF, FYECF_DOC_START_MARK_ON,
+};
+static_assert(array_elements(fy_emitter_cfg_doc_start_mark_group__desc) == array_elements(fy_emitter_cfg_doc_start_mark_group__vals));
+
+const char *fy_emitter_cfg_doc_end_mark_group__desc[] = {
+    "FYECF_DOC_END_MARK_AUTO", "FYECF_DOC_END_MARK_OFF", "FYECF_DOC_END_MARK_ON",
+};
+uint64_t fy_emitter_cfg_doc_end_mark_group__vals[] = {
+    FYECF_DOC_END_MARK_AUTO, FYECF_DOC_END_MARK_OFF, FYECF_DOC_END_MARK_ON,
+};
+static_assert(array_elements(fy_emitter_cfg_doc_end_mark_group__desc) == array_elements(fy_emitter_cfg_doc_end_mark_group__vals));
+
+const char *fy_emitter_cfg_version_dir_group__desc[] = {
+    "FYECF_VERSION_DIR_AUTO", "FYECF_VERSION_DIR_OFF", "FYECF_VERSION_DIR_ON",
+};
+uint64_t fy_emitter_cfg_version_dir_group__vals[] = {
+    FYECF_VERSION_DIR_AUTO, FYECF_VERSION_DIR_OFF, FYECF_VERSION_DIR_ON,
+};
+static_assert(array_elements(fy_emitter_cfg_version_dir_group__desc) == array_elements(fy_emitter_cfg_version_dir_group__vals));
+
+const char *fy_emitter_cfg_tag_dir_group__desc[] = {
+    "FYECF_TAG_DIR_AUTO", "FYECF_TAG_DIR_OFF", "FYECF_TAG_DIR_ON",
+};
+uint64_t fy_emitter_cfg_tag_dir_group__vals[] = {
+    FYECF_TAG_DIR_AUTO, FYECF_TAG_DIR_OFF, FYECF_TAG_DIR_ON,
+};
+static_assert(array_elements(fy_emitter_cfg_tag_dir_group__desc) == array_elements(fy_emitter_cfg_tag_dir_group__vals));
+
+
+const char* fy_emitter_xcfg_flags__desc[] = {
+    "FYEXCF_COLOR_AUTO",
+    "FYEXCF_COLOR_NONE",
+    "FYEXCF_COLOR_FORCE",
+    "FYEXCF_OUTPUT_STDOUT",
+    "FYEXCF_OUTPUT_STDERR",
+    "FYEXCF_OUTPUT_FILE",
+    "FYEXCF_OUTPUT_FD",
+    "FYEXCF_NULL_OUTPUT",
+    "FYEXCF_OUTPUT_FILENAME",
+    "FYEXCF_VISIBLE_WS",
+    "FYEXCF_EXTENDED_INDICATORS",
+    "FYEXCF_INDENTED_SEQ_IN_MAP",
+    "FYEXCF_PRESERVE_FLOW_LAYOUT",
+};
+
+uint64_t fy_emitter_xcfg_flags__vals[] = {
+    FYEXCF_COLOR_AUTO,
+    FYEXCF_COLOR_NONE,
+    FYEXCF_COLOR_FORCE,
+    FYEXCF_OUTPUT_STDOUT,
+    FYEXCF_OUTPUT_STDERR,
+    FYEXCF_OUTPUT_FILE,
+    FYEXCF_OUTPUT_FD,
+    FYEXCF_NULL_OUTPUT,
+    FYEXCF_OUTPUT_FILENAME,
+    FYEXCF_VISIBLE_WS,
+    FYEXCF_EXTENDED_INDICATORS,
+    FYEXCF_INDENTED_SEQ_IN_MAP,
+    FYEXCF_PRESERVE_FLOW_LAYOUT,
+};
+
+static_assert(array_elements(fy_emitter_xcfg_flags__desc) == array_elements(fy_emitter_xcfg_flags__vals));
+
+const char* fy_path_parse_cfg_flags__desc[] = {
+    "FYPPCF_QUIET",
+    "FYPPCF_DISABLE_RECYCLING",
+    "FYPPCF_DISABLE_ACCELERATORS"
+};
+
+uint64_t fy_path_parse_cfg_flags__vals[] = {
+    FYPPCF_QUIET,
+    FYPPCF_DISABLE_RECYCLING,
+    FYPPCF_DISABLE_ACCELERATORS
+};
+
+static_assert(array_elements(fy_path_parse_cfg_flags__desc) == array_elements(fy_path_parse_cfg_flags__vals));
+
+
+const char* fy_path_exec_cfg_flags__desc[] = {
+    "FYPXCF_QUIET",
+    "FYPXCF_DISABLE_RECYCLING",
+    "FYPXCF_DISABLE_ACCELERATORS"
+};
+
+uint64_t fy_path_exec_cfg_flags__vals[] = {
+    FYPXCF_QUIET,
+    FYPXCF_DISABLE_RECYCLING,
+    FYPXCF_DISABLE_ACCELERATORS
+};
+
+static_assert(array_elements(fy_path_exec_cfg_flags__desc) == array_elements(fy_path_exec_cfg_flags__vals));
+
+
+/*
+ * FYGDBF_TRACE is deliberately absent. It is a real flag, but it dumps the
+ * whole event trace for every document on every exec - the same reason
+ * setup_flags() masks the FYEXCF_OUTPUT_* bits out of extended_emitter_flags.
+ */
+const char* fy_generic_document_builder_flags__desc[] = {
+    "FYGDBF_DISABLE_DIRECTORY",
+    "FYGDBF_KEEP_COMMENTS",
+    "FYGDBF_CREATE_MARKERS",
+    "FYGDBF_PYYAML_COMPAT",
+    "FYGDBF_KEEP_STYLE",
+    "FYGDBF_KEEP_FAILSAFE_STR"
+};
+
+uint64_t fy_generic_document_builder_flags__vals[] = {
+    FYGDBF_DISABLE_DIRECTORY,
+    FYGDBF_KEEP_COMMENTS,
+    FYGDBF_CREATE_MARKERS,
+    FYGDBF_PYYAML_COMPAT,
+    FYGDBF_KEEP_STYLE,
+    FYGDBF_KEEP_FAILSAFE_STR
+};
+
+static_assert(array_elements(fy_generic_document_builder_flags__desc) == array_elements(fy_generic_document_builder_flags__vals));
+
+
+/*
+ * FYGBCF_SCHEMA_* is a masked sub-field (bits 0-3), not independent bits -
+ * fy_generic_builder_setup() rejects a schema >= FYGS_COUNT outright, so it
+ * is picked one-of like the FYPCF_JSON_* / FYECF_MODE_* groups rather than
+ * OR-ed together.
+ */
+const char* fy_gb_cfg_schema_group__desc[] = {
+    "FYGBCF_SCHEMA_AUTO",
+    "FYGBCF_SCHEMA_YAML1_2_FAILSAFE",
+    "FYGBCF_SCHEMA_YAML1_2_CORE",
+    "FYGBCF_SCHEMA_YAML1_2_JSON",
+    "FYGBCF_SCHEMA_YAML1_1_FAILSAFE",
+    "FYGBCF_SCHEMA_YAML1_1",
+    "FYGBCF_SCHEMA_YAML1_1_PYYAML",
+    "FYGBCF_SCHEMA_JSON",
+    "FYGBCF_SCHEMA_PYTHON"
+};
+
+uint64_t fy_gb_cfg_schema_group__vals[] = {
+    FYGBCF_SCHEMA_AUTO,
+    FYGBCF_SCHEMA_YAML1_2_FAILSAFE,
+    FYGBCF_SCHEMA_YAML1_2_CORE,
+    FYGBCF_SCHEMA_YAML1_2_JSON,
+    FYGBCF_SCHEMA_YAML1_1_FAILSAFE,
+    FYGBCF_SCHEMA_YAML1_1,
+    FYGBCF_SCHEMA_YAML1_1_PYYAML,
+    FYGBCF_SCHEMA_JSON,
+    FYGBCF_SCHEMA_PYTHON
+};
+
+static_assert(array_elements(fy_gb_cfg_schema_group__desc) == array_elements(fy_gb_cfg_schema_group__vals));
+
+/*
+ * The independent bits of enum fy_gb_cfg_flags.
+ *
+ * FYGBCF_TRACE is out for the same reason FYGDBF_TRACE is - per-exec trace
+ * output. FYGBCF_OWNS_ALLOCATOR is out because ownership is not the seed's to
+ * decide: fy_generic_builder_cleanup() calls fy_allocator_destroy() on the
+ * allocator when that bit is set, and the harness destroys the allocator it
+ * built itself, so letting the seed set it is a double free in the harness,
+ * not a finding. Same story for FYGBCF_CREATE_ALLOCATOR.
+ */
+const char* fy_gb_cfg_flags__desc[] = {
+    "FYGBCF_DUPLICATE_KEYS_DISABLED",
+    "FYGBCF_DEDUP_ENABLED",
+    "FYGBCF_SCOPE_LEADER",
+    "FYGBCF_CREATE_TAG"
+};
+
+uint64_t fy_gb_cfg_flags__vals[] = {
+    FYGBCF_DUPLICATE_KEYS_DISABLED,
+    FYGBCF_DEDUP_ENABLED,
+    FYGBCF_SCOPE_LEADER,
+    FYGBCF_CREATE_TAG
+};
+
+static_assert(array_elements(fy_gb_cfg_flags__desc) == array_elements(fy_gb_cfg_flags__vals));
+
+
+/*
+ * Allocator recipes for fy_generic_builder_cfg.allocator.
+ *
+ * One seeded index picks a name plus a fully specified configuration, so an
+ * RF() reproducer replays the exact allocator by replaying the index.
+ *
+ * "durable" is deliberately absent. It is an on-disk arena: it creates chunk
+ * files in a directory and takes a BLAKE3 thread pool - the same per-call
+ * thread-pool churn the FYPCF_ENABLE_CACHE comment in main.c documents, plus
+ * real filesystem writes on every exec.
+ *
+ * Every size here is bounded on purpose. A linear allocator sized off the
+ * input, or an mremap grow_ratio <= 1.0, is an OOM or a hang in the harness,
+ * not a finding in the library.
+ */
+enum fy_alloc_recipe_kind {
+  FY_ALLOC_RECIPE_DEFAULT,   /* NULL - the builder creates its own "auto" */
+  FY_ALLOC_RECIPE_MALLOC,
+  FY_ALLOC_RECIPE_LINEAR,
+  FY_ALLOC_RECIPE_MREMAP,
+  FY_ALLOC_RECIPE_AUTO,
+  FY_ALLOC_RECIPE_DEDUP,     /* layered over a "malloc" parent the harness owns */
+};
+
+struct fy_alloc_recipe {
+  const char *desc;
+  enum fy_alloc_recipe_kind kind;
+  size_t size;          /* linear buffer / auto+dedup estimate / mremap min arena */
+  unsigned int choice;  /* auto scenario, or mremap arena type */
+  float grow_ratio;
+  float balloon_ratio;
+  unsigned int bits;    /* dedup bucket-count bits (bloom derives from it) */
+};
+
+const struct fy_alloc_recipe fy_alloc_recipes[] = {
+  { "default (builder-created auto)", FY_ALLOC_RECIPE_DEFAULT, 0,        0,                               0.0f, 0.0f, 0 },
+  { "malloc",                         FY_ALLOC_RECIPE_MALLOC,  0,        0,                               0.0f, 0.0f, 0 },
+  { "linear 4K",                      FY_ALLOC_RECIPE_LINEAR,  4096,     0,                               0.0f, 0.0f, 0 },
+  { "linear 256K",                    FY_ALLOC_RECIPE_LINEAR,  262144,   0,                               0.0f, 0.0f, 0 },
+  { "mremap default",                 FY_ALLOC_RECIPE_MREMAP,  0,        FYMRAT_DEFAULT,                  0.0f, 0.0f, 0 },
+  { "mremap mmap 64K x1.5",           FY_ALLOC_RECIPE_MREMAP,  65536,    FYMRAT_MMAP,                     1.5f, 2.0f, 0 },
+  { "mremap malloc 16K x2",           FY_ALLOC_RECIPE_MREMAP,  16384,    FYMRAT_MALLOC,                   2.0f, 1.5f, 0 },
+  { "auto per-tag-free",              FY_ALLOC_RECIPE_AUTO,    0,        FYAST_PER_TAG_FREE,              0.0f, 0.0f, 0 },
+  { "auto per-tag-free dedup",        FY_ALLOC_RECIPE_AUTO,    65536,    FYAST_PER_TAG_FREE_DEDUP,        0.0f, 0.0f, 0 },
+  { "auto per-obj-free",              FY_ALLOC_RECIPE_AUTO,    0,        FYAST_PER_OBJ_FREE,              0.0f, 0.0f, 0 },
+  { "auto per-obj-free dedup",        FY_ALLOC_RECIPE_AUTO,    65536,    FYAST_PER_OBJ_FREE_DEDUP,        0.0f, 0.0f, 0 },
+  { "auto single-linear-range",       FY_ALLOC_RECIPE_AUTO,    262144,   FYAST_SINGLE_LINEAR_RANGE,       0.0f, 0.0f, 0 },
+  { "auto single-linear-range dedup", FY_ALLOC_RECIPE_AUTO,    262144,   FYAST_SINGLE_LINEAR_RANGE_DEDUP, 0.0f, 0.0f, 0 },
+  { "dedup/malloc default bits",      FY_ALLOC_RECIPE_DEDUP,   0,        0,                               0.0f, 0.0f, 0 },
+  { "dedup/malloc 8 bits",            FY_ALLOC_RECIPE_DEDUP,   65536,    0,                               0.0f, 0.0f, 8 },
+};
+
+
+const char* fy_node_style__desc[] = {
+	"FYNS_ANY",
+	"FYNS_FLOW",
+	"FYNS_BLOCK",
+	"FYNS_PLAIN",
+	"FYNS_SINGLE_QUOTED",
+	"FYNS_DOUBLE_QUOTED",
+	"FYNS_LITERAL",
+	"FYNS_FOLDED",
+	"FYNS_ALIAS",
+};
+
+uint64_t fy_node_style__vals[] = {
+	FYNS_ANY,
+	FYNS_FLOW,
+	FYNS_BLOCK,
+	FYNS_PLAIN,
+	FYNS_SINGLE_QUOTED,
+	FYNS_DOUBLE_QUOTED,
+	FYNS_LITERAL,
+	FYNS_FOLDED,
+	FYNS_ALIAS,
+};
+
+static_assert(array_elements(fy_node_style__desc) == array_elements(fy_node_style__vals));
+
+
+static const char * const primitive_type_names[] = {
+  "bool",
+  "char",
+  "signed char",
+  "unsigned char",
+  "short",
+  "unsigned short",
+  "int",
+  "unsigned int",
+  "long",
+  "unsigned long",
+  "long long",
+  "unsigned long long",
+  "float",
+  "double",
+  "long double",
+};
+
+
+const char *fy_type_info_flags__desc[] = {
+    "FYTIF_CONST",
+    "FYTIF_VOLATILE",
+    "FYTIF_RESTRICT",
+    "FYTIF_ELABORATED",
+    "FYTIF_ANONYMOUS",
+    "FYTIF_ANONYMOUS_RECORD_DECL",
+    "FYTIF_ANONYMOUS_GLOBAL",
+    "FYTIF_ANONYMOUS_DEP",
+    "FYTIF_INCOMPLETE",
+    "FYTIF_UNRESOLVED",
+    "FYTIF_MAIN_FILE",
+    "FYTIF_SYSTEM_HEADER",
+};
+
+uint64_t fy_type_info_flags__vals[] = {
+    FYTIF_CONST,
+    FYTIF_VOLATILE,
+    FYTIF_RESTRICT,
+    FYTIF_ELABORATED,
+    FYTIF_ANONYMOUS,
+    FYTIF_ANONYMOUS_RECORD_DECL,
+    FYTIF_ANONYMOUS_GLOBAL,
+    FYTIF_ANONYMOUS_DEP,
+    FYTIF_INCOMPLETE,
+    FYTIF_UNRESOLVED,
+    FYTIF_MAIN_FILE,
+    FYTIF_SYSTEM_HEADER,
+};
+
+static_assert(array_elements(fy_type_info_flags__desc) == array_elements(fy_type_info_flags__vals));
+
+
+static const enum fy_c_generation_flags cgen_flag_combos[] = {
+  FYCGF_INDENT_TAB      | FYCGF_COMMENT_NONE,
+  FYCGF_INDENT_TAB      | FYCGF_COMMENT_RAW,
+  FYCGF_INDENT_TAB      | FYCGF_COMMENT_YAML,
+};
+
+
+/////////////////////////////
+
+static uint64_t flags_from_seed(uint64_t seed, const uint64_t *vals, size_t len)
+{
+  uint64_t result = 0;
+  if (len > 64) {
+    fprintf(stderr, "Warning: flags_from_seed only supports up to 64 flags, but got %zu\n", len);
+    len = 64;
+  }
+
+  for (size_t i = 0; i < len; i++) {
+    if (seed & (1ull << i))
+      result |= vals[i];
+  }
+  return result;
+}
+
+/*
+ * Pick exactly one value out of a group of values that share a masked
+ * sub-field (e.g. FYECF_MODE_*), instead of independently OR-ing each one
+ * in like flags_from_seed() does for true independent bits. OR-ing more
+ * than one value from the same masked sub-field together produces a value
+ * outside the field's defined range.
+ */
+static uint64_t pick_one(uint64_t seed, const uint64_t *vals, size_t len)
+{
+  return vals[seed % len];
+}
+
+/* forward decls: defined further below, alongside the other append_* string helpers */
+static void append_parse_cfg_flags(char **dst, size_t *left, uint64_t flags);
+static void append_emitter_cfg_flags(char **dst, size_t *left, uint64_t flags);
+
+void setup_flags(uint32_t seed, struct flags_t *flags) {
+  srand(seed);
+  flags->parse_flags      = flags_from_seed(rand64(), fy_parse_cfg_flags__vals,   array_elements(fy_parse_cfg_flags__vals))
+                           | pick_one(rand64(), fy_parse_cfg_default_version_group__vals, array_elements(fy_parse_cfg_default_version_group__vals))
+                           | pick_one(rand64(), fy_parse_cfg_json_group__vals,            array_elements(fy_parse_cfg_json_group__vals));
+  flags->emitter_flags    = flags_from_seed(rand64(), fy_emitter_cfg_flags__vals, array_elements(fy_emitter_cfg_flags__vals))
+                           | pick_one(rand64(), fy_emitter_cfg_indent_group__vals,          array_elements(fy_emitter_cfg_indent_group__vals))
+                           | pick_one(rand64(), fy_emitter_cfg_width_group__vals,           array_elements(fy_emitter_cfg_width_group__vals))
+                           | pick_one(rand64(), fy_emitter_cfg_mode_group__vals,            array_elements(fy_emitter_cfg_mode_group__vals))
+                           | pick_one(rand64(), fy_emitter_cfg_doc_start_mark_group__vals,  array_elements(fy_emitter_cfg_doc_start_mark_group__vals))
+                           | pick_one(rand64(), fy_emitter_cfg_doc_end_mark_group__vals,    array_elements(fy_emitter_cfg_doc_end_mark_group__vals))
+                           | pick_one(rand64(), fy_emitter_cfg_version_dir_group__vals,     array_elements(fy_emitter_cfg_version_dir_group__vals))
+                           | pick_one(rand64(), fy_emitter_cfg_tag_dir_group__vals,         array_elements(fy_emitter_cfg_tag_dir_group__vals));
+  flags->node_walk_flags  = flags_from_seed(rand64(), fy_node_walk_flags__vals,   array_elements(fy_node_walk_flags__vals));
+  flags->path_parse_flags = flags_from_seed(rand64(), fy_path_parse_cfg_flags__vals, array_elements(fy_path_parse_cfg_flags__vals));
+  flags->node_style       = fy_node_style__vals[rand64() % array_elements(fy_node_style__vals)];
+  flags->extended_emitter_flags = flags_from_seed(rand64(), fy_emitter_xcfg_flags__vals, array_elements(fy_emitter_xcfg_flags__vals)) & ~(
+        FYEXCF_OUTPUT_STDOUT
+      | FYEXCF_OUTPUT_STDERR
+      | FYEXCF_OUTPUT_FILE
+      | FYEXCF_OUTPUT_FD
+      | FYEXCF_NULL_OUTPUT
+      | FYEXCF_OUTPUT_FILENAME
+    );
+
+  flags->primitive_type = (char *)primitive_type_names[rand64() % array_elements(primitive_type_names)];
+
+  flags->type_info_flags = flags_from_seed(rand64(), fy_type_info_flags__vals, array_elements(fy_type_info_flags__vals));
+  flags->cgen_flag = cgen_flag_combos[rand64() % array_elements(cgen_flag_combos)];
+
+  /*
+   * Drawn last on purpose. Every rand64() here consumes from one srand(seed)
+   * stream, so inserting a draw anywhere above would shift every field after
+   * it and silently re-derive a different flag set for every artifact already
+   * on disk - the RR() reproducers included. Appending leaves the existing
+   * draws bit-identical.
+   */
+  flags->path_exec_flags = flags_from_seed(rand64(), fy_path_exec_cfg_flags__vals, array_elements(fy_path_exec_cfg_flags__vals));
+  flags->generic_doc_builder_flags = flags_from_seed(rand64(), fy_generic_document_builder_flags__vals, array_elements(fy_generic_document_builder_flags__vals));
+  flags->generic_builder_flags = flags_from_seed(rand64(), fy_gb_cfg_flags__vals, array_elements(fy_gb_cfg_flags__vals))
+                                | pick_one(rand64(), fy_gb_cfg_schema_group__vals, array_elements(fy_gb_cfg_schema_group__vals));
+  flags->allocator_recipe = (unsigned int)(rand64() % array_elements(fy_alloc_recipes));
+
+  /*
+   * Drawn whether or not the field exists, so switching it on or off leaves
+   * anything appended after it bit-identical.
+   *
+   * On for ALLOC_FAIL_PERCENT of seeds: a failed allocation usually ends a
+   * test case early, and every test case in the exec gets the same index.
+   *
+   * When on, the index is log-uniform over [1, ALLOC_FAIL_NTH_MAX]: pick an
+   * exponent k in [0, log2 max], then an index in [1, 2^k]. Measured over the
+   * checked-in seeds (each with its own flags), a test case makes a median of
+   * 49 allocations, p90 298, p99 1411, max 3592 - so 4096 reaches every one of
+   * them. A uniform draw over that range would leave a test case below its
+   * index, and nothing injected, ~97% of the time; log-uniform fires in ~54%
+   * of them and still reaches the deepest allocations.
+   */
+  {
+    uint64_t r = rand64();
+#ifdef FLAGS_HAVE_ALLOC_FAIL_NTH
+    const unsigned int ALLOC_FAIL_PERCENT = 2;
+    const unsigned int ALLOC_FAIL_NTH_MAX = 4096;  /* power of two */
+    unsigned int bits = (unsigned int)((r >> 16) & 0xff) % ((unsigned int)__builtin_ctz(ALLOC_FAIL_NTH_MAX) + 1);
+
+    flags->alloc_fail_nth = ((r & 0xffff) % 100 >= ALLOC_FAIL_PERCENT) ? 0
+                          : 1 + (unsigned int)((r >> 24) & ((1u << bits) - 1));
+#else
+    (void)r;
+#endif
+  }
+
+  if (verbose) {
+    {
+      char buf[0x1000];
+      char *p;
+      size_t left;
+
+      p = buf; left = sizeof(buf);
+      append_parse_cfg_flags(&p, &left, flags->parse_flags);
+      printf("fy_parse_cfg_flags: 0x%x %s\n", flags->parse_flags, buf);
+
+      p = buf; left = sizeof(buf);
+      append_emitter_cfg_flags(&p, &left, flags->emitter_flags);
+      printf("fy_emitter_cfg_flags: 0x%x %s\n", flags->emitter_flags, buf);
+    }
+    __print__flags(flags->node_walk_flags,  fy_node_walk_flags__vals,    fy_node_walk_flags__desc,    array_elements(fy_node_walk_flags__vals),    "fy_node_walk_flags");
+    __print__flags(flags->path_parse_flags, fy_path_parse_cfg_flags__vals, fy_path_parse_cfg_flags__desc, array_elements(fy_path_parse_cfg_flags__vals), "fy_path_parse_cfg_flags");
+    __print__flags(flags->path_exec_flags, fy_path_exec_cfg_flags__vals, fy_path_exec_cfg_flags__desc, array_elements(fy_path_exec_cfg_flags__vals), "fy_path_exec_cfg_flags");
+    __print__flags(flags->generic_doc_builder_flags, fy_generic_document_builder_flags__vals, fy_generic_document_builder_flags__desc, array_elements(fy_generic_document_builder_flags__vals), "fy_generic_document_builder_flags");
+    __print__flags(flags->generic_builder_flags, fy_gb_cfg_flags__vals, fy_gb_cfg_flags__desc, array_elements(fy_gb_cfg_flags__vals), "fy_gb_cfg_flags");
+    {
+      /* the schema is a masked sub-field, so __print__flags() cannot show it */
+      unsigned int sch = (flags->generic_builder_flags & FYGBCF_SCHEMA_MASK) >> FYGBCF_SCHEMA_SHIFT;
+      printf("fy_gb_cfg_schema: %u %s\n", sch,
+             sch < array_elements(fy_gb_cfg_schema_group__desc) ? fy_gb_cfg_schema_group__desc[sch] : "?");
+    }
+    printf("allocator_recipe: %u %s\n", flags->allocator_recipe, fy_alloc_recipes[flags->allocator_recipe].desc);
+#ifdef FLAGS_HAVE_ALLOC_FAIL_NTH
+    printf("alloc_fail_nth: %u\n", flags->alloc_fail_nth);
+#endif
+    __print__flags(flags->node_style,       fy_node_style__vals,         fy_node_style__desc,         array_elements(fy_node_style__vals),         "fy_node_style");
+    __print__flags(flags->extended_emitter_flags, fy_emitter_xcfg_flags__vals, fy_emitter_xcfg_flags__desc, array_elements(fy_emitter_xcfg_flags__vals), "extended_emitter_flags");
+    printf("primitive_type: %s\n", flags->primitive_type);
+    __print__flags(flags->type_info_flags, fy_type_info_flags__vals, fy_type_info_flags__desc, array_elements(fy_type_info_flags__vals), "fy_type_info_flags");
+  }
+}
+
+
+static void append_str(char **dst, size_t *left, const char *s)
+{
+	size_t n = strlen(s);
+	if (*left <= 1)
+		return;
+	if (n >= *left)
+		n = *left - 1;
+	memcpy(*dst, s, n);
+	*dst += n;
+	**dst = '\0';
+	*left -= n;
+}
+
+static void append_fmt(char **dst, size_t *left, const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	int n = vsnprintf(*dst, *left, fmt, ap);
+	va_end(ap);
+
+	if (n <= 0)
+		return;
+
+	if ((size_t)n >= *left) {
+		*dst += *left - 1;
+		**dst = '\0';
+		*left = 1;
+		return;
+	}
+
+	*dst += n;
+	*left -= (size_t)n;
+}
+
+static void append_flag_names(char **dst, size_t *left,
+			      uint64_t flags,
+			      const uint64_t *vals,
+			      const char *const *desc,
+			      size_t len)
+{
+	bool first = true;
+
+	for (size_t i = 0; i < len; i++) {
+		if (vals[i] != 0 && (flags & vals[i]) == vals[i]) {
+			if (!first)
+				append_str(dst, left, " | ");
+			append_str(dst, left, desc[i]);
+			first = false;
+		}
+	}
+
+	if (first)
+		append_str(dst, left, "0");
+}
+
+/* Like append_flag_names(), but shares a caller-owned "first" across multiple calls. */
+static void append_flag_names_into(char **dst, size_t *left, bool *first,
+				    uint64_t flags,
+				    const uint64_t *vals,
+				    const char *const *desc,
+				    size_t len)
+{
+	for (size_t i = 0; i < len; i++) {
+		if (vals[i] != 0 && (flags & vals[i]) == vals[i]) {
+			if (!*first)
+				append_str(dst, left, " | ");
+			append_str(dst, left, desc[i]);
+			*first = false;
+		}
+	}
+}
+
+/*
+ * Identify which single value of a masked sub-field group (e.g. FYECF_MODE_*)
+ * is set in @flags, by exact match against the group's own mask - NOT a
+ * nonzero-intersection test, since these values are sequential integers
+ * packed into a shift+mask sub-field, not independent one-hot bits (e.g.
+ * FYECF_INDENT_3 has bits in common with FYECF_INDENT_1's bit pattern).
+ */
+static void append_flag_group_match(char **dst, size_t *left, bool *first,
+				     uint64_t flags,
+				     const uint64_t *vals,
+				     const char *const *desc,
+				     size_t len)
+{
+	uint64_t group_mask = 0;
+
+	for (size_t i = 0; i < len; i++)
+		group_mask |= vals[i];
+
+	for (size_t i = 0; i < len; i++) {
+		if ((flags & group_mask) == vals[i]) {
+			if (!*first)
+				append_str(dst, left, " | ");
+			append_str(dst, left, desc[i]);
+			*first = false;
+			return;
+		}
+	}
+}
+
+static void append_parse_cfg_flags(char **dst, size_t *left, uint64_t flags)
+{
+	bool first = true;
+
+	append_flag_names_into(dst, left, &first, flags,
+				fy_parse_cfg_flags__vals, fy_parse_cfg_flags__desc,
+				array_elements(fy_parse_cfg_flags__vals));
+	append_flag_group_match(dst, left, &first, flags,
+				 fy_parse_cfg_default_version_group__vals, fy_parse_cfg_default_version_group__desc,
+				 array_elements(fy_parse_cfg_default_version_group__vals));
+	append_flag_group_match(dst, left, &first, flags,
+				 fy_parse_cfg_json_group__vals, fy_parse_cfg_json_group__desc,
+				 array_elements(fy_parse_cfg_json_group__vals));
+	if (first)
+		append_str(dst, left, "0");
+}
+
+static void append_emitter_cfg_flags(char **dst, size_t *left, uint64_t flags)
+{
+	bool first = true;
+
+	append_flag_names_into(dst, left, &first, flags,
+				fy_emitter_cfg_flags__vals, fy_emitter_cfg_flags__desc,
+				array_elements(fy_emitter_cfg_flags__vals));
+	append_flag_group_match(dst, left, &first, flags,
+				 fy_emitter_cfg_indent_group__vals, fy_emitter_cfg_indent_group__desc,
+				 array_elements(fy_emitter_cfg_indent_group__vals));
+	append_flag_group_match(dst, left, &first, flags,
+				 fy_emitter_cfg_width_group__vals, fy_emitter_cfg_width_group__desc,
+				 array_elements(fy_emitter_cfg_width_group__vals));
+	append_flag_group_match(dst, left, &first, flags,
+				 fy_emitter_cfg_mode_group__vals, fy_emitter_cfg_mode_group__desc,
+				 array_elements(fy_emitter_cfg_mode_group__vals));
+	append_flag_group_match(dst, left, &first, flags,
+				 fy_emitter_cfg_doc_start_mark_group__vals, fy_emitter_cfg_doc_start_mark_group__desc,
+				 array_elements(fy_emitter_cfg_doc_start_mark_group__vals));
+	append_flag_group_match(dst, left, &first, flags,
+				 fy_emitter_cfg_doc_end_mark_group__vals, fy_emitter_cfg_doc_end_mark_group__desc,
+				 array_elements(fy_emitter_cfg_doc_end_mark_group__vals));
+	append_flag_group_match(dst, left, &first, flags,
+				 fy_emitter_cfg_version_dir_group__vals, fy_emitter_cfg_version_dir_group__desc,
+				 array_elements(fy_emitter_cfg_version_dir_group__vals));
+	append_flag_group_match(dst, left, &first, flags,
+				 fy_emitter_cfg_tag_dir_group__vals, fy_emitter_cfg_tag_dir_group__desc,
+				 array_elements(fy_emitter_cfg_tag_dir_group__vals));
+	if (first)
+		append_str(dst, left, "0");
+}
+
+static const char *const cgen_flag_exprs[] = {
+	"FYCGF_INDENT_TAB | FYCGF_COMMENT_NONE",
+	"FYCGF_INDENT_TAB | FYCGF_COMMENT_RAW",
+	"FYCGF_INDENT_TAB | FYCGF_COMMENT_YAML",
+	"FYCGF_INDENT_SPACES_2 | FYCGF_COMMENT_NONE",
+	"FYCGF_INDENT_SPACES_4 | FYCGF_COMMENT_RAW",
+	"FYCGF_INDENT_SPACES_8 | FYCGF_COMMENT_YAML",
+};
+
+static const enum fy_c_generation_flags cgen_flag_vals[] = {
+	FYCGF_INDENT_TAB      | FYCGF_COMMENT_NONE,
+	FYCGF_INDENT_TAB      | FYCGF_COMMENT_RAW,
+	FYCGF_INDENT_TAB      | FYCGF_COMMENT_YAML,
+	FYCGF_INDENT_SPACES_2 | FYCGF_COMMENT_NONE,
+	FYCGF_INDENT_SPACES_4 | FYCGF_COMMENT_RAW,
+	FYCGF_INDENT_SPACES_8 | FYCGF_COMMENT_YAML,
+};
+
+static void append_cgen_flag_expr(char **dst, size_t *left, uint64_t flag)
+{
+	for (size_t i = 0; i < array_elements(cgen_flag_vals); i++) {
+		if (flag == cgen_flag_vals[i]) {
+			append_str(dst, left, cgen_flag_exprs[i]);
+			return;
+		}
+	}
+	append_fmt(dst, left, "0x%x", flag);
+}
+
+char *flags_to_struct_string(struct flags_t *flags)
+{
+	static char buf[0x4000];
+	char *p = buf;
+	size_t left = sizeof(buf);
+
+	buf[0] = '\0';
+
+	append_str(&p, &left, "{\n");
+	append_str(&p, &left, "  .parse_flags = ");
+	append_parse_cfg_flags(&p, &left, flags->parse_flags);
+	append_str(&p, &left, ",\n");
+
+	append_str(&p, &left, "  .emitter_flags = ");
+	append_emitter_cfg_flags(&p, &left, flags->emitter_flags);
+	append_str(&p, &left, ",\n");
+
+	append_str(&p, &left, "  .extended_emitter_flags = ");
+	append_flag_names(&p, &left,
+			  flags->extended_emitter_flags,
+			  fy_emitter_xcfg_flags__vals,
+			  fy_emitter_xcfg_flags__desc,
+			  array_elements(fy_emitter_xcfg_flags__vals));
+	append_str(&p, &left, ",\n");
+
+	append_str(&p, &left, "  .node_walk_flags = ");
+	append_flag_names(&p, &left,
+			  flags->node_walk_flags,
+			  fy_node_walk_flags__vals,
+			  fy_node_walk_flags__desc,
+			  array_elements(fy_node_walk_flags__vals));
+	append_str(&p, &left, ",\n");
+
+	append_str(&p, &left, "  .path_parse_flags = ");
+	append_flag_names(&p, &left,
+			  flags->path_parse_flags,
+			  fy_path_parse_cfg_flags__vals,
+			  fy_path_parse_cfg_flags__desc,
+			  array_elements(fy_path_parse_cfg_flags__vals));
+	append_str(&p, &left, ",\n");
+
+	append_str(&p, &left, "  .path_exec_flags = ");
+	append_flag_names(&p, &left,
+			  flags->path_exec_flags,
+			  fy_path_exec_cfg_flags__vals,
+			  fy_path_exec_cfg_flags__desc,
+			  array_elements(fy_path_exec_cfg_flags__vals));
+	append_str(&p, &left, ",\n");
+
+	append_str(&p, &left, "  .generic_doc_builder_flags = ");
+	append_flag_names(&p, &left,
+			  flags->generic_doc_builder_flags,
+			  fy_generic_document_builder_flags__vals,
+			  fy_generic_document_builder_flags__desc,
+			  array_elements(fy_generic_document_builder_flags__vals));
+	append_str(&p, &left, ",\n");
+
+	append_str(&p, &left, "  .generic_builder_flags = ");
+	{
+		bool gb_first = true;
+		append_flag_names_into(&p, &left, &gb_first, flags->generic_builder_flags,
+					fy_gb_cfg_flags__vals, fy_gb_cfg_flags__desc,
+					array_elements(fy_gb_cfg_flags__vals));
+		append_flag_group_match(&p, &left, &gb_first, flags->generic_builder_flags,
+					 fy_gb_cfg_schema_group__vals, fy_gb_cfg_schema_group__desc,
+					 array_elements(fy_gb_cfg_schema_group__vals));
+		if (gb_first)
+			append_str(&p, &left, "0");
+	}
+	append_str(&p, &left, ",\n");
+
+	append_fmt(&p, &left, "  .allocator_recipe = %u, /* %s */\n",
+		   flags->allocator_recipe,
+		   fy_alloc_recipes[flags->allocator_recipe].desc);
+
+	append_str(&p, &left, "  .node_style = ");
+	if ((size_t)flags->node_style < array_elements(fy_node_style__vals))
+		append_str(&p, &left, fy_node_style__desc[flags->node_style]);
+	else
+		append_fmt(&p, &left, "%u", (unsigned)flags->node_style);
+	append_str(&p, &left, ",\n");
+
+	append_str(&p, &left, "  .primitive_type = \"");
+	append_str(&p, &left, flags->primitive_type ? flags->primitive_type : "");
+	append_str(&p, &left, "\",\n");
+
+	append_str(&p, &left, "  .type_info_flags = ");
+	append_flag_names(&p, &left,
+			  flags->type_info_flags,
+			  fy_type_info_flags__vals,
+			  fy_type_info_flags__desc,
+			  array_elements(fy_type_info_flags__vals));
+	append_str(&p, &left, ",\n");
+
+	append_str(&p, &left, "  .cgen_flag = ");
+	append_cgen_flag_expr(&p, &left, flags->cgen_flag);
+#ifdef FLAGS_HAVE_ALLOC_FAIL_NTH
+	append_fmt(&p, &left, ",\n  .alloc_fail_nth = %u", flags->alloc_fail_nth);
+#endif
+	append_str(&p, &left, "\n}");
+
+	return buf;
+}

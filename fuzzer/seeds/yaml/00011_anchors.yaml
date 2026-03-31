@@ -1,0 +1,7 @@
+ÿÿÿÿbase: &b
+  name: anchor
+  n: 1
+derived:
+  <<: *b
+  n: 2
+alias: *b
