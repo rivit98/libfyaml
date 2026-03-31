@@ -1,0 +1,8 @@
+ÿÿÿÿ%YAML 1.2
+---
+!!str scalar
+--- !custom
+int: !!int 42
+float: !!float .inf
+null: ~
+bool: [true, False, YES]

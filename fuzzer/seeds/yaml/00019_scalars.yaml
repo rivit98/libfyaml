@@ -1,0 +1,11 @@
+*literal: |
+  line one
+  line two
+folded: >-
+  folded
+  scalar
+single: 'it''s quoted'
+double: "tab\there \x41"
+empty:
+? complex key
+: complex value

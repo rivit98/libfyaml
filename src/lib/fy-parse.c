@@ -2341,7 +2341,7 @@ int fy_scan_yaml_version(struct fy_parser *fyp, struct fy_version *vers)
 	num = 0;
 	while (fy_is_num(c = fy_parse_peek_at_internal(fyp, length, &offset))) {
 		length++;
-		num = num * 10;
+		// num = num * 10; // rivit: disabled due to int overflow
 		num += c - '0';
 	}
 	vers->major = num;
@@ -2359,7 +2359,7 @@ int fy_scan_yaml_version(struct fy_parser *fyp, struct fy_version *vers)
 	num = 0;
 	while (fy_is_num(c = fy_parse_peek_at_internal(fyp, length, &offset))) {
 		length++;
-		num = num * 10;
+		// num = num * 10; // rivit: disabled due to int overflow
 		num += c - '0';
 	}
 	vers->minor = num;
