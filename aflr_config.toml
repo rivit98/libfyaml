@@ -1,0 +1,71 @@
+[target]
+# Target binary to fuzz
+path = "/root/libfyaml/build/fuzz"
+
+# Instrumented with *SAN binary to use
+san_path = "/root/libfyaml/build/fuzz"
+
+# Instrumented with CMPLOG binary to use
+cmpl_path = "/root/libfyaml/build/fuzz"
+
+# Instrumented with Laf-intel/CMPCOV binary to use
+cmpc_path = "/root/libfyaml/build/fuzz"
+
+# Instrumented for code-coverage dumping
+cov_path = "/root/libfyaml/build/fuzz"
+
+# Target binary arguments, including @@ if needed
+args = [
+]
+
+[coverage]
+# Report type: HTML, TEXT
+report_type = "TEXT"
+
+# Generate a report for each queue sub-directory instead of a unified one
+split_reports = false
+
+# Miscellaneous flags the user wants to provide extra to `llvm-cov show...`
+# Compare: https://llvm.org/docs/CommandGuide/llvm-cov.html#llvm-cov-show
+misc_show_args = []
+
+# Miscellaneous flags the user wants to provide extra to `llvm-cov report...`
+# Compare: https://llvm.org/docs/CommandGuide/llvm-cov.html#llvm-cov-report
+misc_report_args = []
+
+[afl_cfg]
+# Amount of processes to spin up
+runners = 4
+
+# Seed corpus directory
+seed_dir = "/root/yaml-corpus"
+
+# Solution/Crash output directory
+solution_dir = "/root/fuzz/libfyaml/artifacts"
+
+# Token dictionary to use
+dictionary = ""
+
+# Custom AFL flags
+afl_flags = "-G 10000"
+
+
+[session]
+# Spin up a custom tmux session with the fuzzers
+dry_run = false
+
+# Custom tmux session name
+name = "aflr_libfyaml"
+
+# Runner backend to use: [tmux, screen]
+runner = "tmux"
+
+[misc]
+# Enable TUI mode
+tui = true
+
+# Start with no tui and detached from any session
+detached = false
+
+# Enable RAMDISK for the fuzzing session
+ramdisk = false
