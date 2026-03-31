@@ -1,0 +1,1061 @@
+%YAML 1.2
+%TAG !e! tag:example.com,2000:app/
+---
+# ============================================================================
+# libfyaml fuzzing corpus - a single, feature-dense YAML document.
+#
+# Embedded into the harness (corpus_yaml.h, #embed) and handed straight to
+# fy_document_build_from_string() by the tests that used to spend half of
+# their fuzzer bytes on a throw-away document. The fuzzer input now drives
+# only the interesting side: paths, ypath expressions, scanf formats,
+# comment payloads, mapping keys.
+#
+# Rules for editing:
+#   * stays ONE document (no second '---') - fy_document_build_from_string()
+#     builds exactly one
+#   * the root stays a MAPPING - test_mapping_operations*() bail otherwise
+#   * no duplicate keys inside any single mapping (parsing fails without
+#     FYPCF_ALLOW_DUPLICATE_KEYS), and at most one '<<' per mapping
+#   * no recursive aliases - FYPCF_RESOLVE_DOCUMENT would chase them forever
+#   * keep the short top-level keys (a, b, c, k, 0, 1, key, name, ...) - they
+#     are what randomly-mutated paths actually have a chance of hitting
+# ============================================================================
+
+# ── short keys: cheap targets for mutated paths ─────────────────────────────
+a: 1
+b: two
+c: [3, 4]
+d: {e: 5}
+k: v
+x: null
+y: true
+z: ~
+0: zero
+1: one
+2: 2.0
+key: key-value
+name: corpus
+value: 42
+list: [a, b, c]
+map: {a: 1, b: 2}
+seq:
+  - first
+  - second
+  - third
+str: plain scalar
+num: -17
+: value-of-the-empty-key
+
+# ── null / bool / int / float resolution (core + 1.1 schemas) ───────────────
+nulls:
+  tilde: ~
+  lower: null
+  title: Null
+  upper: NULL
+  empty:
+  quoted: "null"
+
+bools:
+  true_lower: true
+  true_title: True
+  true_upper: TRUE
+  false_lower: false
+  false_title: False
+  false_upper: FALSE
+  yes_11: yes
+  no_11: no
+  on_11: on
+  off_11: off
+  y_11: y
+  n_11: n
+  quoted: "true"
+
+ints:
+  zero: 0
+  positive: 12345
+  negative: -12345
+  explicit_plus: +12345
+  minus_zero: -0
+  underscored: 1_000_000
+  octal_11: 0123
+  octal_12: 0o17
+  hex: 0x1F2E
+  hex_underscored: 0x_1F_2E
+  binary_11: 0b1010_0111
+  sexagesimal_11: 190:20:30
+  int64_max: 9223372036854775807
+  int64_min: -9223372036854775808
+  uint64_max: 18446744073709551615
+  overflow: 99999999999999999999999999999999
+  quoted: "12345"
+
+floats:
+  simple: 1.5
+  canonical: 6.8523015e+5
+  exponential: 12.3015e+02
+  negative_exp: 1.2e-99
+  fixed: 1230.15
+  leading_dot: .5
+  trailing_dot: 5.
+  negative: -0.0
+  underscored: 1_230.15
+  sexagesimal_11: 190:20:30.15
+  positive_inf: .inf
+  negative_inf: -.Inf
+  upper_inf: .INF
+  not_a_number: .NaN
+  nan_upper: .NAN
+  huge: 1e999999999
+  tiny: 1e-999999999
+
+# ── every scalar style ──────────────────────────────────────────────────────
+scalars:
+  plain: a plain scalar with spaces
+  plain_with_colon: 12:30 is not a mapping here
+  plain_with_hash: value#not-a-comment
+  plain_multiline: this plain scalar
+    continues on the next line
+    and on a third one
+  single: 'single quoted'
+  single_escaped: 'it''s got an embedded quote'
+  single_multiline: 'single quoted
+    spanning lines'
+  single_empty: ''
+  double: "double quoted"
+  double_escaped: "tab:\t nl:\n cr:\r nul:\0 bell:\a bs:\b vt:\v ff:\f esc:\e"
+  double_unicode: "hex:\x41 bmp:é astral:\U0001F600 nel:\N nbsp:\_ ls:\L ps:\P"
+  double_specials: "quote:\" slash:\/ backslash:\\"
+  double_multiline: "double quoted
+    folded onto one line"
+  double_continuation: "no space here:\
+    joined"
+  double_empty: ""
+  long_line: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+# ── block scalars: both styles, every chomping and indent indicator ─────────
+block_scalars:
+  literal: |
+    line one
+    line two
+
+    line four after a blank
+  literal_strip: |-
+    no trailing newline
+  literal_keep: |+
+    trailing newlines kept
+
+
+  literal_indent: |2
+     two-space indented body
+     second line
+  literal_indent_strip: |2-
+     indented and stripped
+  literal_more_indented: |
+    normal
+        more indented
+    normal again
+  folded: >
+    these lines
+    fold into one
+
+    this is a second paragraph
+  folded_strip: >-
+    folded without
+    a trailing newline
+  folded_keep: >+
+    folded and kept
+
+  folded_indent: >1
+   one-space indented fold
+   second line
+  folded_more_indented: >
+    folded text
+      but this line is more indented so it stays
+    folded again
+
+# ── flow collections ────────────────────────────────────────────────────────
+flow:
+  empty_seq: []
+  empty_map: {}
+  seq: [1, 2, 3]
+  map: {a: 1, b: 2}
+  nested: [[1, [2, [3, [4]]]], {a: {b: {c: {d: 1}}}}]
+  mixed: [{a: 1}, [b], "c", 'd', null, true, 5]
+  key_no_value: {solo}
+  value_empty: {a: }
+  key_empty: {: v}
+  seq_of_maps: [{k: 1}, {k: 2}, {k: 3}]
+  explicit_key: {? complex: value}
+  multiline: [
+      1,
+      2,
+      3
+    ]
+  in_block_key: {a: 1, b: [2, 3]}
+  deep: [[[[[[[[[[nested]]]]]]]]]]
+  quoted_keys: {"double": 1, 'single': 2}
+
+# ── tags: shorthand, verbatim, local, named handle ──────────────────────────
+tags:
+  str: !!str 12345
+  int: !!int "42"
+  float: !!float "3.14"
+  bool: !!bool "true"
+  null_tag: !!null "~"
+  seq: !!seq [a, b]
+  map: !!map {a: 1}
+  verbatim: !<tag:yaml.org,2002:str> verbatim tagged
+  verbatim_local: !<!local-type> local verbatim
+  local: !local-tag local tagged
+  named_handle: !e!widget named handle tagged
+  percent_escaped: !%21escaped percent escaped tag
+  non_specific: ! non specific
+  on_seq: !local-seq
+    - a
+    - b
+  on_map: !local-map
+    a: 1
+  set: !!set
+    ? apple
+    ? banana
+    ? cherry
+  omap: !!omap
+    - first: 1
+    - second: 2
+    - third: 3
+  pairs: !!pairs
+    - repeated: 1
+    - repeated: 2
+    - repeated: 3
+  binary: !!binary |
+    R0lGODlhDAAMAIQAAP//9/X17unp5WZmZgAAAOfn515eXvPz7Y6OjuDg4J+fn5
+    OTk6enp56enmlpaWNjY6Ojo4SEhP/++f/++f/++f/++f/++f/++f/++f/++f/+
+    +f/++f/++f/++f/++f/++SH+Dk1hZGUgd2l0aCBHSU1QACwAAAAADAAMAAAFLC
+    AgjoEwnuNAFOhpEMTRiggcz4BNJHrv/zCFcLiwMWYNG84BwwEeECcgggoBADs=
+
+# ── timestamps (1.1 schema) ─────────────────────────────────────────────────
+timestamps:
+  canonical: 2001-12-15T02:59:43.1Z
+  iso8601: 2001-12-14t21:59:43.10-05:00
+  spaced: 2001-12-14 21:59:43.10 -5
+  date_only: 2002-12-14
+  quoted: "2001-12-15T02:59:43.1Z"
+
+# ── anchors, aliases and merge keys ─────────────────────────────────────────
+anchors:
+  scalar: &anchor_scalar anchored scalar
+  tagged: !!str &anchor_tagged tagged and anchored
+  tag_first: &anchor_tag_first !!str anchor before tag
+  seq: &anchor_seq [1, 2, 3]
+  map: &anchor_map {a: 1, b: 2}
+  block_map: &anchor_block
+    nested: value
+    deeper:
+      key: leaf
+  block_seq: &anchor_block_seq
+    - one
+    - two
+  empty: &anchor_empty
+  unicode: &anchor_ünïcödé unicode anchor name
+  long: &aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa long anchor name
+
+aliases:
+  to_scalar: *anchor_scalar
+  to_tagged: *anchor_tagged
+  to_seq: *anchor_seq
+  to_map: *anchor_map
+  to_block: *anchor_block
+  to_block_seq: *anchor_block_seq
+  to_empty: *anchor_empty
+  to_unicode: *anchor_ünïcödé
+  in_seq: [*anchor_scalar, *anchor_seq]
+  in_map: {v: *anchor_map}
+  as_key:
+    *anchor_scalar : alias used as a key
+
+merge_defaults: &merge_defaults
+  adapter: postgres
+  host: localhost
+  port: 5432
+
+merge_overrides: &merge_overrides
+  port: 6543
+  pool: 8
+
+merge_single:
+  <<: *merge_defaults
+  database: single
+
+merge_multiple:
+  <<: [*merge_overrides, *merge_defaults]
+  database: multiple
+
+merge_explicit_tag:
+  !!merge << : *merge_defaults
+  database: explicit
+
+# ── complex (explicit) keys ─────────────────────────────────────────────────
+complex_keys:
+  ? explicit simple key
+  : explicit simple value
+  ? [a, b]
+  : sequence as key
+  ? {k: v}
+  : mapping as key
+  ? |
+    literal block
+    as a key
+  : literal block value
+  ? >
+    folded block as key
+  : folded block value
+  ? &complex_anchor anchored complex key
+  : anchored complex value
+  ? !!str tagged complex key
+  : tagged complex value
+  ?
+  : value of the explicit null key
+  ? "quoted complex key"
+  : quoted complex value
+
+# ── keys of every shape ─────────────────────────────────────────────────────
+keys:
+  "double quoted key": 1
+  'single quoted key': 2
+  key with spaces: 3
+  key:with:colons: 4
+  key-with-dashes: 5
+  key_with_underscores: 6
+  key.with.dots: 7
+  key/with/slashes: 8
+  "key\twith\tescapes": 9
+  ünïcödé-key: 10
+  日本語のキー: 11
+  "": 12
+  "0": 13
+  "3": 14
+  "true": 15
+  "~": 16
+  # (a bare `~:` key would collide with the quoted "~" above)
+  very_long_key_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: 18
+
+# ── unicode payloads ────────────────────────────────────────────────────────
+unicode:
+  latin1: "café naïve résumé"
+  greek: "αβγδε ζηθικ"
+  cyrillic: "Привет мир"
+  cjk: "日本語 中文 한국어"
+  rtl: "مرحبا بالعالم"
+  hebrew: "שלום עולם"
+  emoji: "😀 🎉 🚀 👨‍👩‍👧‍👦"
+  combining: "é à ñ"
+  math: "∀x∈ℝ: x² ≥ 0"
+  box_drawing: "┌─┬─┐ │ │ └─┴─┘"
+  nbsp: "a\_b"
+  bmp_max: "�"
+  astral: "\U0001F600\U0010FFFF"
+  plain_unicode: héllo wörld
+  zero_width: "a​b"
+
+# ── comments in every position ──────────────────────────────────────────────
+# a comment before the key
+comments: # a comment after the key
+  # a comment above the value
+  before: value # a comment after the value
+  # comment between entries
+
+  after_blank: value
+  in_seq:
+    # comment above the item
+    - one # comment after the item
+    # comment between items
+    - two
+  in_flow: [ # comment inside a flow seq
+      1,
+      2 # after a flow item
+    ]
+  empty_comment: #
+  hash_in_string: "# not a comment"
+# a trailing comment for the block
+
+# ── empty and degenerate values ─────────────────────────────────────────────
+empties:
+  empty_value:
+  empty_string: ""
+  empty_seq: []
+  empty_map: {}
+  seq_of_empties:
+    -
+    -
+    -
+  map_of_empties:
+    a:
+    b:
+    c:
+  nested_empty:
+    inner:
+      innermost:
+
+# ── deep nesting: gives ypath /** something to recurse through ──────────────
+deep:
+  l1:
+    l2:
+      l3:
+        l4:
+          l5:
+            l6:
+              l7:
+                l8:
+                  l9:
+                    l10:
+                      leaf: bottom
+                      sibling: [1, 2, {end: true}]
+
+deep_seq:
+  - - - - - - - - - - deeply nested sequence leaf
+
+# ── mixed structure for sequence/mapping walkers ────────────────────────────
+mixed:
+  - scalar
+  - [nested, sequence]
+  - {nested: mapping}
+  - &mixed_anchor anchored in a sequence
+  - *mixed_anchor
+  - !!str tagged in a sequence
+  - |
+    block scalar in a sequence
+  - >
+    folded scalar in a sequence
+  -
+  - - deeper
+    - - deeper still
+
+# ── bulk breadth: hundreds of addressable nodes so mutated paths and ────────
+# ── ypath expressions ('/**', '/bulk/*/name', '[0:8]', ...) have real ──────
+# ── targets to resolve against instead of always missing ───────────────────
+bulk:
+  - id: 0
+    name: item-00
+    enabled: true
+    ratio: 0.000
+    tags: [t0, group-0, even]
+    meta: {group: g0, index: 0, parent: bulk}
+    values:
+      - 0
+      - "0"
+      - null
+  - id: 1
+    name: item-01
+    enabled: false
+    ratio: 0.021
+    tags: [t1, group-1, odd]
+    meta: {group: g1, index: 1, parent: bulk}
+    values:
+      - 1
+      - "1"
+      - 0x01
+  - id: 2
+    name: item-02
+    enabled: true
+    ratio: 0.042
+    tags: [t2, group-2, even]
+    meta: {group: g2, index: 2, parent: bulk}
+    values:
+      - 2
+      - "2"
+      - 0x02
+  - id: 3
+    name: item-03
+    enabled: false
+    ratio: 0.062
+    tags: [t3, group-3, odd]
+    meta: {group: g3, index: 3, parent: bulk}
+    values:
+      - 3
+      - "3"
+      - null
+  - id: 4
+    name: item-04
+    enabled: true
+    ratio: 0.083
+    tags: [t4, group-0, even]
+    meta: {group: g0, index: 4, parent: bulk}
+    values:
+      - 4
+      - "4"
+      - 0x04
+  - id: 5
+    name: item-05
+    enabled: false
+    ratio: 0.104
+    tags: [t5, group-1, odd]
+    meta: {group: g1, index: 5, parent: bulk}
+    values:
+      - 5
+      - "5"
+      - 0x05
+  - id: 6
+    name: item-06
+    enabled: true
+    ratio: 0.125
+    tags: [t6, group-2, even]
+    meta: {group: g2, index: 6, parent: bulk}
+    values:
+      - 6
+      - "6"
+      - null
+  - id: 7
+    name: item-07
+    enabled: false
+    ratio: 0.146
+    tags: [t7, group-3, odd]
+    meta: {group: g3, index: 7, parent: bulk}
+    values:
+      - 7
+      - "7"
+      - 0x07
+  - id: 8
+    name: item-08
+    enabled: true
+    ratio: 0.167
+    tags: [t8, group-0, even]
+    meta: {group: g0, index: 8, parent: bulk}
+    values:
+      - 8
+      - "8"
+      - 0x08
+  - id: 9
+    name: item-09
+    enabled: false
+    ratio: 0.188
+    tags: [t9, group-1, odd]
+    meta: {group: g1, index: 9, parent: bulk}
+    values:
+      - 9
+      - "9"
+      - null
+  - id: 10
+    name: item-10
+    enabled: true
+    ratio: 0.208
+    tags: [t10, group-2, even]
+    meta: {group: g2, index: 10, parent: bulk}
+    values:
+      - 10
+      - "10"
+      - 0x0A
+  - id: 11
+    name: item-11
+    enabled: false
+    ratio: 0.229
+    tags: [t11, group-3, odd]
+    meta: {group: g3, index: 11, parent: bulk}
+    values:
+      - 11
+      - "11"
+      - 0x0B
+  - id: 12
+    name: item-12
+    enabled: true
+    ratio: 0.250
+    tags: [t12, group-0, even]
+    meta: {group: g0, index: 12, parent: bulk}
+    values:
+      - 12
+      - "12"
+      - null
+  - id: 13
+    name: item-13
+    enabled: false
+    ratio: 0.271
+    tags: [t13, group-1, odd]
+    meta: {group: g1, index: 13, parent: bulk}
+    values:
+      - 13
+      - "13"
+      - 0x0D
+  - id: 14
+    name: item-14
+    enabled: true
+    ratio: 0.292
+    tags: [t14, group-2, even]
+    meta: {group: g2, index: 14, parent: bulk}
+    values:
+      - 14
+      - "14"
+      - 0x0E
+  - id: 15
+    name: item-15
+    enabled: false
+    ratio: 0.312
+    tags: [t15, group-3, odd]
+    meta: {group: g3, index: 15, parent: bulk}
+    values:
+      - 15
+      - "15"
+      - null
+  - id: 16
+    name: item-16
+    enabled: true
+    ratio: 0.333
+    tags: [t16, group-0, even]
+    meta: {group: g0, index: 16, parent: bulk}
+    values:
+      - 16
+      - "16"
+      - 0x10
+  - id: 17
+    name: item-17
+    enabled: false
+    ratio: 0.354
+    tags: [t17, group-1, odd]
+    meta: {group: g1, index: 17, parent: bulk}
+    values:
+      - 17
+      - "17"
+      - 0x11
+  - id: 18
+    name: item-18
+    enabled: true
+    ratio: 0.375
+    tags: [t18, group-2, even]
+    meta: {group: g2, index: 18, parent: bulk}
+    values:
+      - 18
+      - "18"
+      - null
+  - id: 19
+    name: item-19
+    enabled: false
+    ratio: 0.396
+    tags: [t19, group-3, odd]
+    meta: {group: g3, index: 19, parent: bulk}
+    values:
+      - 19
+      - "19"
+      - 0x13
+  - id: 20
+    name: item-20
+    enabled: true
+    ratio: 0.417
+    tags: [t20, group-0, even]
+    meta: {group: g0, index: 20, parent: bulk}
+    values:
+      - 20
+      - "20"
+      - 0x14
+  - id: 21
+    name: item-21
+    enabled: false
+    ratio: 0.438
+    tags: [t21, group-1, odd]
+    meta: {group: g1, index: 21, parent: bulk}
+    values:
+      - 21
+      - "21"
+      - null
+  - id: 22
+    name: item-22
+    enabled: true
+    ratio: 0.458
+    tags: [t22, group-2, even]
+    meta: {group: g2, index: 22, parent: bulk}
+    values:
+      - 22
+      - "22"
+      - 0x16
+  - id: 23
+    name: item-23
+    enabled: false
+    ratio: 0.479
+    tags: [t23, group-3, odd]
+    meta: {group: g3, index: 23, parent: bulk}
+    values:
+      - 23
+      - "23"
+      - 0x17
+  - id: 24
+    name: item-24
+    enabled: true
+    ratio: 0.500
+    tags: [t24, group-0, even]
+    meta: {group: g0, index: 24, parent: bulk}
+    values:
+      - 24
+      - "24"
+      - null
+  - id: 25
+    name: item-25
+    enabled: false
+    ratio: 0.521
+    tags: [t25, group-1, odd]
+    meta: {group: g1, index: 25, parent: bulk}
+    values:
+      - 25
+      - "25"
+      - 0x19
+  - id: 26
+    name: item-26
+    enabled: true
+    ratio: 0.542
+    tags: [t26, group-2, even]
+    meta: {group: g2, index: 26, parent: bulk}
+    values:
+      - 26
+      - "26"
+      - 0x1A
+  - id: 27
+    name: item-27
+    enabled: false
+    ratio: 0.562
+    tags: [t27, group-3, odd]
+    meta: {group: g3, index: 27, parent: bulk}
+    values:
+      - 27
+      - "27"
+      - null
+  - id: 28
+    name: item-28
+    enabled: true
+    ratio: 0.583
+    tags: [t28, group-0, even]
+    meta: {group: g0, index: 28, parent: bulk}
+    values:
+      - 28
+      - "28"
+      - 0x1C
+  - id: 29
+    name: item-29
+    enabled: false
+    ratio: 0.604
+    tags: [t29, group-1, odd]
+    meta: {group: g1, index: 29, parent: bulk}
+    values:
+      - 29
+      - "29"
+      - 0x1D
+  - id: 30
+    name: item-30
+    enabled: true
+    ratio: 0.625
+    tags: [t30, group-2, even]
+    meta: {group: g2, index: 30, parent: bulk}
+    values:
+      - 30
+      - "30"
+      - null
+  - id: 31
+    name: item-31
+    enabled: false
+    ratio: 0.646
+    tags: [t31, group-3, odd]
+    meta: {group: g3, index: 31, parent: bulk}
+    values:
+      - 31
+      - "31"
+      - 0x1F
+  - id: 32
+    name: item-32
+    enabled: true
+    ratio: 0.667
+    tags: [t32, group-0, even]
+    meta: {group: g0, index: 32, parent: bulk}
+    values:
+      - 32
+      - "32"
+      - 0x20
+  - id: 33
+    name: item-33
+    enabled: false
+    ratio: 0.688
+    tags: [t33, group-1, odd]
+    meta: {group: g1, index: 33, parent: bulk}
+    values:
+      - 33
+      - "33"
+      - null
+  - id: 34
+    name: item-34
+    enabled: true
+    ratio: 0.708
+    tags: [t34, group-2, even]
+    meta: {group: g2, index: 34, parent: bulk}
+    values:
+      - 34
+      - "34"
+      - 0x22
+  - id: 35
+    name: item-35
+    enabled: false
+    ratio: 0.729
+    tags: [t35, group-3, odd]
+    meta: {group: g3, index: 35, parent: bulk}
+    values:
+      - 35
+      - "35"
+      - 0x23
+  - id: 36
+    name: item-36
+    enabled: true
+    ratio: 0.750
+    tags: [t36, group-0, even]
+    meta: {group: g0, index: 36, parent: bulk}
+    values:
+      - 36
+      - "36"
+      - null
+  - id: 37
+    name: item-37
+    enabled: false
+    ratio: 0.771
+    tags: [t37, group-1, odd]
+    meta: {group: g1, index: 37, parent: bulk}
+    values:
+      - 37
+      - "37"
+      - 0x25
+  - id: 38
+    name: item-38
+    enabled: true
+    ratio: 0.792
+    tags: [t38, group-2, even]
+    meta: {group: g2, index: 38, parent: bulk}
+    values:
+      - 38
+      - "38"
+      - 0x26
+  - id: 39
+    name: item-39
+    enabled: false
+    ratio: 0.812
+    tags: [t39, group-3, odd]
+    meta: {group: g3, index: 39, parent: bulk}
+    values:
+      - 39
+      - "39"
+      - null
+  - id: 40
+    name: item-40
+    enabled: true
+    ratio: 0.833
+    tags: [t40, group-0, even]
+    meta: {group: g0, index: 40, parent: bulk}
+    values:
+      - 40
+      - "40"
+      - 0x28
+  - id: 41
+    name: item-41
+    enabled: false
+    ratio: 0.854
+    tags: [t41, group-1, odd]
+    meta: {group: g1, index: 41, parent: bulk}
+    values:
+      - 41
+      - "41"
+      - 0x29
+  - id: 42
+    name: item-42
+    enabled: true
+    ratio: 0.875
+    tags: [t42, group-2, even]
+    meta: {group: g2, index: 42, parent: bulk}
+    values:
+      - 42
+      - "42"
+      - null
+  - id: 43
+    name: item-43
+    enabled: false
+    ratio: 0.896
+    tags: [t43, group-3, odd]
+    meta: {group: g3, index: 43, parent: bulk}
+    values:
+      - 43
+      - "43"
+      - 0x2B
+  - id: 44
+    name: item-44
+    enabled: true
+    ratio: 0.917
+    tags: [t44, group-0, even]
+    meta: {group: g0, index: 44, parent: bulk}
+    values:
+      - 44
+      - "44"
+      - 0x2C
+  - id: 45
+    name: item-45
+    enabled: false
+    ratio: 0.938
+    tags: [t45, group-1, odd]
+    meta: {group: g1, index: 45, parent: bulk}
+    values:
+      - 45
+      - "45"
+      - null
+  - id: 46
+    name: item-46
+    enabled: true
+    ratio: 0.958
+    tags: [t46, group-2, even]
+    meta: {group: g2, index: 46, parent: bulk}
+    values:
+      - 46
+      - "46"
+      - 0x2E
+  - id: 47
+    name: item-47
+    enabled: false
+    ratio: 0.979
+    tags: [t47, group-3, odd]
+    meta: {group: g3, index: 47, parent: bulk}
+    values:
+      - 47
+      - "47"
+      - 0x2F
+
+wide:
+  k00: 0
+  k01: 1
+  k02: 2
+  k03: 3
+  k04: 4
+  k05: 5
+  k06: 6
+  k07: 7
+  k08: 8
+  k09: 9
+  k10: 10
+  k11: 11
+  k12: 12
+  k13: 13
+  k14: 14
+  k15: 15
+  k16: 16
+  k17: 17
+  k18: 18
+  k19: 19
+  k20: 20
+  k21: 21
+  k22: 22
+  k23: 23
+  k24: 24
+  k25: 25
+  k26: 26
+  k27: 27
+  k28: 28
+  k29: 29
+  k30: 30
+  k31: 31
+  k32: 32
+  k33: 33
+  k34: 34
+  k35: 35
+  k36: 36
+  k37: 37
+  k38: 38
+  k39: 39
+  k40: 40
+  k41: 41
+  k42: 42
+  k43: 43
+  k44: 44
+  k45: 45
+  k46: 46
+  k47: 47
+  k48: 48
+  k49: 49
+  k50: 50
+  k51: 51
+  k52: 52
+  k53: 53
+  k54: 54
+  k55: 55
+  k56: 56
+  k57: 57
+  k58: 58
+  k59: 59
+  k60: 60
+  k61: 61
+  k62: 62
+  k63: 63
+
+wide_seq:
+  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63]
+
+matrix:
+  - [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+  - [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+  - [24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+  - [36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47]
+  - [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59]
+  - [60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71]
+  - [72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83]
+  - [84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95]
+  - [96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107]
+  - [108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]
+  - [120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131]
+  - [132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143]
+
+tree:
+  leaf: depth-0
+  index: 0
+  siblings: [s0, s1, s2]
+  branch:
+    leaf: depth-1
+    index: 1
+    siblings: [s3, s4, s5]
+    branch:
+      leaf: depth-2
+      index: 2
+      siblings: [s6, s7, s8]
+      branch:
+        leaf: depth-3
+        index: 3
+        siblings: [s9, s10, s11]
+        branch:
+          leaf: depth-4
+          index: 4
+          siblings: [s12, s13, s14]
+          branch:
+            leaf: depth-5
+            index: 5
+            siblings: [s15, s16, s17]
+            branch:
+              leaf: depth-6
+              index: 6
+              siblings: [s18, s19, s20]
+              branch:
+                leaf: depth-7
+                index: 7
+                siblings: [s21, s22, s23]
+                branch: leaf-of-the-tree
+
+recursive_seq:
+  - depth-0
+  -
+    - depth-1
+    -
+      - depth-2
+      -
+        - depth-3
+        -
+          - depth-4
+          -
+            - depth-5
+            -
+              - depth-6
+              -
+                - depth-7
+                -
+                  - depth-8
+                  -
+                    - depth-9
+                    -
+                      - depth-10
+                      -
+                        - depth-11
+                        -
+                          final: bottom
+
