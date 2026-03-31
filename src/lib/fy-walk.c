@@ -1004,7 +1004,7 @@ int fy_path_fetch_seq_index_or_slice(struct fy_path_parser *fypp, int c)
 		digits = 0;
 		val = 0;
 		while (fy_is_num((c = fy_reader_peek_at(fyr, i)))) {
-			nval = (val * 10) | (c - '0');
+			nval = (val) | (c - '0'); // rivit: prevent int overflow
 			FYR_PARSE_ERROR_CHECK(fyr, 0, i, FYEM_SCAN,
 					nval >= val && nval >= 0, err_out,
 					"illegal sequence index (overflow)");

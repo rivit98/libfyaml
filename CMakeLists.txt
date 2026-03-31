@@ -1380,6 +1380,7 @@ else()
     # Windows needs no extra libraries for threading (uses kernel32)
 endif()
 
+
 # Link libm where it exists as a separate library (Linux, FreeBSD, etc.).
 # macOS includes math in libSystem; Windows has no libm.
 find_library(LIBM m)
@@ -1387,6 +1388,10 @@ if(LIBM)
     target_link_libraries(fyaml PUBLIC ${LIBM})
     target_link_libraries(fyaml_static PUBLIC ${LIBM})
 endif()
+
+add_subdirectory(src/fuzz)
+
+
 if(ATOMIC_LIBS)
     target_link_libraries(fyaml PUBLIC ${ATOMIC_LIBS})
     target_link_libraries(fyaml_static PUBLIC ${ATOMIC_LIBS})
