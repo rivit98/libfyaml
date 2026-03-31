@@ -1,0 +1,7 @@
+ncԴmessages:
+- role: user
+  content:
+  - type: text
+    text: find who Trump is married to looking at the page
+    cache_control:
+      type: ephemeral

@@ -1,0 +1,4 @@
+Ó$‘Ëfoo: !!seq
+- !!str a
+- !!map
+  key: !!str value

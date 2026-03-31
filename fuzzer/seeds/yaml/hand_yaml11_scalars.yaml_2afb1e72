@@ -1,0 +1,8 @@
+ÿÿÿÿ%YAML 1.1
+---
+bools: [y, Y, yes, Yes, YES, n, N, no, No, NO, true, True, TRUE, false, False, FALSE, on, On, ON, off, Off, OFF]
+ints: [0b1010_0111, 02472256, 0x_0A_74_AE, 685_230, +685230, -0, 190:20:30, 0o17, 0x1F]
+floats: [6.8523015e+5, 685.230_15e+03, 685_230.15, 190:20:30.15, -.inf, +.INF, .NaN, .5, 1e10, 1., -1.e-3]
+nulls: [~, null, Null, NULL, '']
+ts: [2001-12-14t21:59:43.10-05:00, 2001-12-14 21:59:43.10 -5, 2001-12-15 2:59:43.10, 2002-12-14]
+sexagesimal: 1:20

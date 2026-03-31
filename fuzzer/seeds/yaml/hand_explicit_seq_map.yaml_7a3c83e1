@@ -1,0 +1,11 @@
+š1.- ? a
+  : b
+- ? c
+- d: e
+  f: g
+- - h
+- !!map {i: j}
+- !!seq [k]
+- !!str l
+- &x !!int 3
+- !foo &y {}

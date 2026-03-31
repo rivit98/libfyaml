@@ -1,0 +1,29 @@
+ÿÿÿÿlit: |
+  line1
+   indented
+  line3
+
+lit_keep: |+
+  keep
+
+lit_strip: |-
+  strip
+fold: >
+  folded
+  text
+
+  para
+    more indented
+  back
+fold_ind: >2-
+    leading spaces
+  x
+lit_ind: |4
+        eight
+    four
+empty_lit: |
+nested:
+  - |
+    in seq
+  - >-
+    folded in seq

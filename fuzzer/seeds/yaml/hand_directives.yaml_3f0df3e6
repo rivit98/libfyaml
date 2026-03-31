@@ -1,0 +1,23 @@
+Ò5ñ%YAML 1.1
+%TAG ! tag:example.com,2000:app/
+%TAG !! tag:yaml.org,2002:
+%TAG !e! tag:example.com,2000:e/
+--- !shape
+- !circle {center: &ORIGIN {x: 73, y: 129}, radius: 7}
+- !e!line {start: *ORIGIN, finish: {x: 89, y: 102}}
+- !<tag:yaml.org,2002:str> verbatim
+- !!binary R0lGODlhDAAMAIQAAP//9/X17unp5WZmZgAAAOfn515eXvPz7Y6OjuDg4J+fn5
+- !!set {a, b, c}
+- !!omap [a: 1, b: 2]
+- !!pairs [a: 1, a: 2]
+- !!timestamp 2001-12-14t21:59:43.10-05:00
+- !!float 1_000.5
+- !!int 0b1010
+- !!null ''
+- !!bool yes
+- ! nonspecific
+... # end
+%YAML 1.2
+---
+second: doc
+...

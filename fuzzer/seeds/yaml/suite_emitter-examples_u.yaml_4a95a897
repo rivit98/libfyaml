@@ -1,0 +1,4 @@
+í-‡p{
+  foo : !!str,
+  !!str : bar,
+}

@@ -1,0 +1,7 @@
+~°vma: b: c
+- x
+key: [unclosed
+"bad \q escape"
+! !!
+*undefined
+&a &b dup anchors

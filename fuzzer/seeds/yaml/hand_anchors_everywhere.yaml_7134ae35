@@ -1,0 +1,10 @@
+P¤£¦&root
+? &k1 key1
+: &v1 value1
+&k2 key2: &s2 [&i1 a, &i2 b, *i1]
+&k3 key3: &m3 {&fk fk: &fv fv, *fk : again}
+alias_key: *v1
+*k1 : dup alias key
+self: *root
+anchor_on_empty: &empty
+ref_empty: *empty

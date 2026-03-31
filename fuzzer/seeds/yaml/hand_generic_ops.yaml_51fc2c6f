@@ -1,0 +1,5 @@
+ü¼ä›ints: [5, 3, 9, 1, -4, 100, 0]
+strs: [b, a, c, "", "A"]
+mixed: [1, a, 2.5, true, null, [x], {k: v}]
+map: {z: 1, a: 2, m: 3}
+nested: {l: [{a: 1}, {a: 2}], m: {x: {y: {z: 1}}}}

@@ -1,0 +1,4 @@
+C”{
+  foo : !!str,
+  !!str : bar,
+}
