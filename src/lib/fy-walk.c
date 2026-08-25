@@ -867,6 +867,12 @@ void fy_path_parser_setup(struct fy_path_parser *fypp, const struct fy_path_pars
 		fypp->cfg = *pcfg;
 	if (!fypp->cfg.diag) {
 		fy_diag_cfg_default(&dcfg);
+		/* quiet mode drops the default output destination */
+		if (fypp->cfg.flags & FYPPCF_QUIET) {
+			dcfg.fp = NULL;
+			dcfg.output_fn = NULL;
+			dcfg.colorize = false;
+		}
 		fypp->cfg.diag = fy_diag_create(&dcfg);
 		fypp->owns_diag = true;
 	}
