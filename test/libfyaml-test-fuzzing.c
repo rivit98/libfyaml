@@ -18,6 +18,9 @@
 #include <check.h>
 
 #include <libfyaml.h>
+#ifdef HAVE_REFLECTION
+#include <libfyaml/libfyaml-reflection.h>
+#endif
 
 #include "fy-check.h"
 
@@ -1299,6 +1302,176 @@ END_TEST
 
 #endif
 
+/* Test: gh#317 - the path parser honours FYPPCF_QUIET */
+START_TEST(fuzz_issue_317_path_parse_quiet_repro)
+{
+	struct fy_path_parse_cfg pcfg = {0};
+	struct fy_path_expr *expr;
+
+	pcfg.flags = FYPPCF_QUIET;
+
+	/* an illegal expression, the error must not reach stderr */
+	expr = fy_path_expr_build_from_string(&pcfg, "/**[", FY_NT);
+	ck_assert_ptr_eq(expr, NULL);
+}
+END_TEST
+
+#if defined(__linux__)
+/* Test: gh#318 - a diagnostic pulls input and moves the reader buffer */
+START_TEST(fuzz_issue_318_reader_pull_uaf_repro)
+{
+	static const char tail[] =
+		"\x0a\x25\x24\x32\x30\x30\x0a\x2e\x00\x2e\xe0\xff\xff\x2e\x2e\x2e"
+		"\xe0\x9f\x98\x81\x20\x21\x6d\x20\x0d";
+	static char data[2084 + sizeof(tail) - 1];
+	struct fy_document *fyd;
+	struct fy_node *fyn;
+	FILE *f;
+
+	memset(data, ' ', 2084);
+	memcpy(data + 2084, tail, sizeof(tail) - 1);
+
+	fyd = fy_document_create(NULL);
+	ck_assert_ptr_ne(fyd, NULL);
+
+	f = fmemopen(data, sizeof(data), "r");
+	ck_assert_ptr_ne(f, NULL);
+
+	fyn = fy_node_build_from_fp(fyd, f);
+	if (fyn)
+		fy_document_set_root(fyd, fyn);
+
+	fclose(f);
+	fy_document_destroy(fyd);
+}
+END_TEST
+#endif
+
+/* Test: gh#320 - a \U escape with the high bit set overflows the accumulator */
+START_TEST(fuzz_issue_320_unicode_escape_shift_repro)
+{
+	const char data[] = "\x22\x6c\x20\x5c\x55\x66\x65\x66\x66\x66\x66\x66\x66\x66\x20\x22";
+	struct fy_document *fyd;
+	struct fy_node *fyn;
+
+	fyd = fy_document_create(NULL);
+	ck_assert_ptr_ne(fyd, NULL);
+
+	fyn = fy_node_build_from_string(fyd, data, sizeof(data) - 1);
+	ck_assert_ptr_eq(fyn, NULL);
+
+	fy_document_destroy(fyd);
+}
+END_TEST
+
+/* Test: gh#323 - a deeply nested flow mapping without the depth limit */
+START_TEST(fuzz_issue_323_deep_flow_mapping_repro)
+{
+	static char data[22106];
+	struct fy_parse_cfg cfg = {0};
+	struct fy_document *fyd;
+
+	cfg.flags = FYPCF_QUIET |
+		    FYPCF_RESOLVE_DOCUMENT |
+		    FYPCF_DISABLE_MMAP_OPT |
+		    FYPCF_DISABLE_RECYCLING |
+		    FYPCF_KEEP_COMMENTS |
+		    FYPCF_DISABLE_DEPTH_LIMIT |
+		    FYPCF_DISABLE_ACCELERATORS |
+		    FYPCF_DISABLE_BUFFERING |
+		    FYPCF_PREFER_RECURSIVE |
+		    FYPCF_RELAXED_FLOW_DOC |
+		    FYPCF_DEFAULT_VERSION_AUTO |
+		    FYPCF_JSON_AUTO;
+
+	memset(data, '{', sizeof(data));
+
+	fyd = fy_document_build_from_string(&cfg, data, sizeof(data));
+	ck_assert_ptr_eq(fyd, NULL);
+	fy_document_destroy(fyd);
+}
+END_TEST
+
+#ifdef HAVE_REFLECTION
+
+/* the packed blobs below are all malformed, none must be accepted */
+static void fuzz_packed_blob_check(const char *blob, size_t size)
+{
+	struct fy_reflection *rfl;
+
+	rfl = fy_reflection_from_packed_blob(blob, size, NULL);
+	ck_assert_ptr_eq(rfl, NULL);
+	fy_reflection_destroy(rfl);
+}
+
+/* Test: gh#319 - the type table runs past the end of the blob */
+START_TEST(fuzz_issue_319_packed_blob_short_read_repro)
+{
+	static const char blob[] =
+		"\x46\x59\x50\x47\x7f\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00"
+		"\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x21"
+		"\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+		"\x6f\x6f\x6f\x6f\x6f\x8a\x6f\x6f\x6f\x6f\x6f\x63\x68\x6f\x3a\x20";
+
+	fuzz_packed_blob_check(blob, sizeof(blob) - 1);
+}
+END_TEST
+
+/* Test: gh#321 - the blob header declares an illegal id size */
+START_TEST(fuzz_issue_321_packed_blob_bad_id_size_repro)
+{
+	static const char blob[] =
+		"\x46\x59\x50\x47\x20\x00\x00\x00\x63\x00\x00\x00\x00\x00\x00\x00"
+		"\x00\x00\x00\x1d\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+		"\x00\x00\x00\x00\x00\x00\x6f\x6f\x63\x68\x6f\x3a\x30\x6f\xf0\x88"
+		"\xa5\x81\x09\x01\x00\x30\x30\x30\x30\x8f\x00\x00\x00\xe9\xe9\xe9"
+		"\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xd7\xe9"
+		"\xe9\xe9\xe9\xe9\xe9\xe9\xdb\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\x3e"
+		"\x01\x00\x01\x01\x5b\x31\x16\x33\x20\xf0\x88\x30\x30\x30\x0a\x3e"
+		"\x2d\xef\x88\x84\x81\x21\x6d\x20\x0d\x88\xa5\x81\x09\x01\x00";
+
+	fuzz_packed_blob_check(blob, sizeof(blob) - 1);
+}
+END_TEST
+
+/* Test: gh#322 - the blob header declares regions larger than the blob */
+START_TEST(fuzz_issue_322_packed_blob_bad_region_size_repro)
+{
+	static const char blob[] =
+		"\x46\x59\x50\x47\x20\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00"
+		"\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\xf1\x00\x00\x00"
+		"\x00\xf9\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+		"\x00\xcd\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x30\x30\x30"
+		"\x6f\x6d\x6d\x65\x6e\x74\x0a\x20\x20\x20\x3e\xe0\x90\xa3\x30\x30"
+		"\x30\x30";
+
+	fuzz_packed_blob_check(blob, sizeof(blob) - 1);
+}
+END_TEST
+
+/* Test: gh#324 - a type in the blob refers to a decl that does not exist */
+START_TEST(fuzz_issue_324_packed_blob_missing_decl_repro)
+{
+	static const char blob[] =
+		"\x46\x59\x50\x47\x20\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+		"\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x02"
+		"\x00\x00\x30\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+		"\x30\x30\x41\x30\x30\x30\x30\x29\x29\x29\x29\x29\x29\x29\x29\x29"
+		"\x36\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29"
+		"\x29\x29\x29\x29\x29\x29\x29\x29\x10\x29\x29\x29\x29\x29\x29\x29"
+		"\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29"
+		"\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x31\x29\x29\x29"
+		"\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29"
+		"\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29\x29"
+		"\x29\x29\x29\x64\x29\x29\x29\x29\x29\x29\x29\x29\x30\x0a\x6f\x70"
+		"\x6f\x63\x68\x6f\x3a\x02\x02\xff\x7f\x7f\xff";
+
+	fuzz_packed_blob_check(blob, sizeof(blob) - 1);
+}
+END_TEST
+
+#endif /* HAVE_REFLECTION */
+
 void libfyaml_case_fuzzing(struct fy_check_suite *cs)
 {
 	struct fy_check_testcase *ctc;
@@ -1377,5 +1550,17 @@ void libfyaml_case_fuzzing(struct fy_check_suite *cs)
 	fy_check_testcase_add_test(ctc, fuzz_anchor_accel_cleanup_mapping_borrowed_input);
 #if defined(__linux__)
 	fy_check_testcase_add_test(ctc, fuzz_parser_streaming_alias_collection_state_mask);
+#endif
+	fy_check_testcase_add_test(ctc, fuzz_issue_317_path_parse_quiet_repro);
+#if defined(__linux__)
+	fy_check_testcase_add_test(ctc, fuzz_issue_318_reader_pull_uaf_repro);
+#endif
+	fy_check_testcase_add_test(ctc, fuzz_issue_320_unicode_escape_shift_repro);
+	fy_check_testcase_add_test(ctc, fuzz_issue_323_deep_flow_mapping_repro);
+#ifdef HAVE_REFLECTION
+	fy_check_testcase_add_test(ctc, fuzz_issue_319_packed_blob_short_read_repro);
+	fy_check_testcase_add_test(ctc, fuzz_issue_321_packed_blob_bad_id_size_repro);
+	fy_check_testcase_add_test(ctc, fuzz_issue_322_packed_blob_bad_region_size_repro);
+	fy_check_testcase_add_test(ctc, fuzz_issue_324_packed_blob_missing_decl_repro);
 #endif
 }
