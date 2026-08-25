@@ -66,9 +66,12 @@ struct fy_path;
  *
  * These flags control the operation of the path parse
  *
- * @FYPPCF_QUIET: Quiet, do not output any information messages
+ * @FYPPCF_QUIET: Quiet, do not output any information messages.
+ *                It applies only when the path parser creates its own
+ *                diagnostic object, that is, when @diag is NULL.
  * @FYPPCF_DISABLE_RECYCLING: Disable recycling optimization
- * @FYPPCF_DISABLE_ACCELERATORS: Disable use of access accelerators (saves memory)
+ * @FYPPCF_DISABLE_ACCELERATORS: Reserved. The path parser keeps no access
+ *                               accelerators, so this flag does nothing.
  */
 enum fy_path_parse_cfg_flags {
 	FYPPCF_QUIET			= FY_BIT(0),
