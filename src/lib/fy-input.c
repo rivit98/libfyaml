@@ -1301,7 +1301,7 @@ const void *fy_reader_ensure_lookahead_slow_path(struct fy_reader *fyr, size_t s
 		old_start = fy_input_start_size(fyr->current_input, &old_size);
 
 		p = fy_reader_input_try_pull(fyr, fyr->current_input, size, leftp);
-		if (!p || *leftp < size)
+		if (!p)
 			return NULL;
 
 		/* update with what is new */
@@ -1324,7 +1324,11 @@ const void *fy_reader_ensure_lookahead_slow_path(struct fy_reader *fyr, size_t s
 			fyr->current_ptr_end = (const char *)fyr->current_ptr_start + new_size;
 		}
 
+		/* always refresh the cached pointer even if the read is short */
 		fyr->current_ptr = p;
+
+		if (*leftp < size)
+			return NULL;
 	}
 	return p;
 }
