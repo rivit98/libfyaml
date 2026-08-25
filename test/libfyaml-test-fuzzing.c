@@ -1478,6 +1478,13 @@ void libfyaml_case_fuzzing(struct fy_check_suite *cs)
 
 	ctc = fy_check_suite_add_test_case(cs, "fuzzing");
 
+	/*
+	 * The deep flow reproducers do much recursive work under ASAN and
+	 * debug builds; give the case a generous wall-clock budget
+	 * (CK_TIMEOUT_MULTIPLIER still scales it).
+	 */
+	fy_check_testcase_set_timeout(ctc, 120);
+
 	fy_check_testcase_add_test(ctc, fuzz_resolve_aliases_stars_amps);
 	fy_check_testcase_add_test(ctc, fuzz_resolve_disable_buffering_colon_star);
 	fy_check_testcase_add_test(ctc, fuzz_resolve_aliases_special_chars);
