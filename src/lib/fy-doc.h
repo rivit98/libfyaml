@@ -39,6 +39,19 @@ static inline int fy_depth_limit(void)
 	return FYPCF_GUARANTEED_MINIMUM_DEPTH_LIMIT;
 }
 
+/*
+ * The recursive document loader uses about this much stack for each
+ * nesting level. It is a generous estimate; the real cost is lower.
+ */
+#define FY_DOC_LOAD_STACK_PER_DEPTH	1024
+
+/*
+ * The highest depth that the recursive document loader can use without
+ * a stack overflow. FYPCF_DISABLE_DEPTH_LIMIT raises the limit to this
+ * value, it does not remove it.
+ */
+int fy_depth_limit_max(void);
+
 FY_TYPE_FWD_DECL_LIST(document);
 
 struct fy_node;

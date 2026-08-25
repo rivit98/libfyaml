@@ -26,6 +26,28 @@
 
 #include "xxhash.h"
 
+int fy_depth_limit_max(void)
+{
+	size_t stack_size, tmp_depth;
+	int depth, depth_limit;
+
+	stack_size = fy_stack_size();
+	if (!stack_size)
+		stack_size = 1U << 20;	/* assume a small 1MB stack */
+
+	/* keep half of the stack for everything else */
+	tmp_depth = (stack_size / 2) / FY_DOC_LOAD_STACK_PER_DEPTH;
+	if (tmp_depth > INT_MAX)
+		tmp_depth = INT_MAX;
+
+	depth = (int)tmp_depth;
+	depth_limit = fy_depth_limit();
+	if (depth < depth_limit)
+		depth = depth_limit;
+
+	return depth;
+}
+
 static const struct fy_hash_desc hd_anchor;
 static const struct fy_hash_desc hd_nanchor;
 static const struct fy_hash_desc hd_mapping;
@@ -1394,7 +1416,7 @@ bool fy_node_mapping_key_is_duplicate(struct fy_node *fyn, struct fy_node *fyn_k
 static int
 fy_parse_document_load_node(struct fy_parser *fyp, struct fy_document *fyd,
 			    struct fy_eventp *fyep, struct fy_node **fynp,
-			    int *depthp);
+			    int *depthp, int depth_limit);
 
 int fy_parse_document_load_alias(struct fy_parser *fyp,
 				 struct fy_document *fyd FY_UNUSED,
@@ -1415,7 +1437,8 @@ fy_parse_document_load_scalar(struct fy_parser *fyp,
 			      struct fy_document *fyd,
 			      struct fy_eventp *fyep,
 			      struct fy_node **fynp,
-			      int *depthp FY_UNUSED)
+			      int *depthp FY_UNUSED,
+			      int depth_limit FY_UNUSED)
 {
 	struct fy_node *fyn = NULL;
 	struct fy_event *fye;
@@ -1487,7 +1510,7 @@ err_out_rc:
 static int
 fy_parse_document_load_sequence(struct fy_parser *fyp, struct fy_document *fyd,
 				struct fy_eventp *fyep, struct fy_node **fynp,
-				int *depthp)
+				int *depthp, int depth_limit)
 {
 	struct fy_node *fyn = NULL, *fyn_item = NULL;
 	struct fy_event *fye = NULL;
@@ -1543,7 +1566,7 @@ fy_parse_document_load_sequence(struct fy_parser *fyp, struct fy_document *fyd,
 		if (fye->type == FYET_SEQUENCE_END)
 			break;
 
-		rc = fy_parse_document_load_node(fyp, fyd, fyep, &fyn_item, depthp);
+		rc = fy_parse_document_load_node(fyp, fyd, fyep, &fyn_item, depthp, depth_limit);
 		fyep = NULL;
 		fyp_error_check(fyp, !rc, err_out_rc,
 				"fy_parse_document_load_node() failed");
@@ -1583,7 +1606,7 @@ err_out_rc:
 static int
 fy_parse_document_load_mapping(struct fy_parser *fyp, struct fy_document *fyd,
 			       struct fy_eventp *fyep, struct fy_node **fynp,
-			       int *depthp)
+			       int *depthp, int depth_limit)
 {
 	struct fy_node *fyn = NULL, *fyn_key = NULL, *fyn_value = NULL;
 	struct fy_node_pair *fynp_item = NULL;
@@ -1648,7 +1671,7 @@ fy_parse_document_load_mapping(struct fy_parser *fyp, struct fy_document *fyd,
 		fyn_value = NULL;
 
 		rc = fy_parse_document_load_node(fyp, fyd,
-						 fyep, &fyn_key, depthp);
+						 fyep, &fyn_key, depthp, depth_limit);
 		fyep = NULL;
 
 		fyp_error_check(fyp, !rc, err_out_rc,
@@ -1679,7 +1702,7 @@ fy_parse_document_load_mapping(struct fy_parser *fyp, struct fy_document *fyd,
 		fye = &fyep->e;
 
 		rc = fy_parse_document_load_node(fyp, fyd,
-						 fyep, &fyn_value, depthp);
+						 fyep, &fyn_value, depthp, depth_limit);
 		fyep = NULL;
 		fyp_error_check(fyp, !rc, err_out_rc,
 				"fy_parse_document_load_node() failed");
@@ -1735,7 +1758,7 @@ err_out_rc:
 static int
 fy_parse_document_load_node(struct fy_parser *fyp, struct fy_document *fyd,
 			    struct fy_eventp *fyep, struct fy_node **fynp,
-			    int *depthp)
+			    int *depthp, int depth_limit)
 {
 	struct fy_event *fye;
 	enum fy_event_type type;
@@ -1764,8 +1787,7 @@ fy_parse_document_load_node(struct fy_parser *fyp, struct fy_document *fyd,
 	(*depthp)++;
 
 	FYP_TOKEN_ERROR_CHECK(fyp, fy_event_get_token(fye), FYEM_DOC,
-			((fyp->cfg.flags & FYPCF_DISABLE_DEPTH_LIMIT) ||
-				*depthp <= fy_depth_limit()), err_out,
+			*depthp <= depth_limit, err_out,
 			"depth limit exceeded");
 
 	switch (type) {
@@ -1773,17 +1795,17 @@ fy_parse_document_load_node(struct fy_parser *fyp, struct fy_document *fyd,
 	case FYET_ALIAS:
 	case FYET_SCALAR:
 		ret = fy_parse_document_load_scalar(fyp, fyd,
-						     fyep, fynp, depthp);
+						     fyep, fynp, depthp, depth_limit);
 		break;
 
 	case FYET_SEQUENCE_START:
 		ret = fy_parse_document_load_sequence(fyp, fyd,
-						       fyep, fynp, depthp);
+						       fyep, fynp, depthp, depth_limit);
 		break;
 
 	case FYET_MAPPING_START:
 		ret = fy_parse_document_load_mapping(fyp, fyd,
-						      fyep, fynp, depthp);
+						      fyep, fynp, depthp, depth_limit);
 		break;
 
 	default:
@@ -1836,7 +1858,7 @@ struct fy_document *fy_parse_load_document_recursive(struct fy_parser *fyp)
 	struct fy_document *fyd = NULL;
 	struct fy_eventp *fyep = NULL;
 	struct fy_event *fye = NULL;
-	int rc, depth;
+	int rc, depth, depth_limit;
 	bool was_stream_start;
 
 again:
@@ -1883,15 +1905,19 @@ again:
 			"fy_parse_document_create() failed");
 
 	fyp_doc_debug(fyp, "calling load_node() for root");
+
 	depth = 0;
+	depth_limit = (fyp->cfg.flags & FYPCF_DISABLE_DEPTH_LIMIT) ?
+			fy_depth_limit_max() : fy_depth_limit();
+
 	rc = fy_parse_document_load_node(fyp, fyd, fy_parse_private(fyp),
-					 &fyd->root, &depth);
+					 &fyd->root, &depth, depth_limit);
 	fyp_error_check(fyp, !rc, err_out,
 			"fy_parse_document_load_node() failed");
 
 	rc = fy_parse_document_load_end(fyp, fyd, fy_parse_private(fyp));
 	fyp_error_check(fyp, !rc, err_out,
-			"fy_parse_document_load_node() failed");
+			"fy_parse_document_load_end() failed");
 
 	/* always resolve parents */
 	fy_resolve_parent_node(fyd, fyd->root, NULL);
@@ -5268,7 +5294,7 @@ fy_document_load_node(struct fy_document *fyd, struct fy_parser *fyp,
 	struct fy_eventp *fyep = NULL;
 	struct fy_event *fye = NULL;
 	struct fy_node *fyn = NULL;
-	int rc, depth;
+	int rc, depth, depth_limit;
 	bool was_stream_start;
 
 	if (!fyd || !fyp)
@@ -5320,14 +5346,18 @@ again:
 	fye = NULL;
 
 	fyd_doc_debug(fyd, "calling load_node() for root");
+
 	depth = 0;
-	rc = fy_parse_document_load_node(fyp, fyd, fy_parse_private(fyp), &fyn, &depth);
+	depth_limit = (fyp->cfg.flags & FYPCF_DISABLE_DEPTH_LIMIT) ?
+			fy_depth_limit_max() : fy_depth_limit();
+
+	rc = fy_parse_document_load_node(fyp, fyd, fy_parse_private(fyp), &fyn, &depth, depth_limit);
 	fyd_error_check(fyd, !rc, err_out,
 			"fy_parse_document_load_node() failed");
 
 	rc = fy_parse_document_load_end(fyp, fyd, fy_parse_private(fyp));
 	fyd_error_check(fyd, !rc, err_out,
-			"fy_parse_document_load_node() failed");
+			"fy_parse_document_load_end() failed");
 
 	/* always resolve parents */
 	fy_resolve_parent_node(fyd, fyn, NULL);
