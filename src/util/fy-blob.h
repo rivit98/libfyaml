@@ -93,6 +93,7 @@ struct blob_region {
 	size_t size;
 	enum blob_endian_type endian;
 	bool bswap;
+	bool overflow;	/* a read tried to go past the end of the region */
 	size_t curr;
 };
 
@@ -117,6 +118,11 @@ uint ## _bits ## _t _pfx ## _bits (struct blob_region *br) \
 { \
 	uint ## _bits ## _t v; \
 \
+	if (br->curr > br->size || sizeof(v) > br->size - br->curr) { \
+		br->overflow = true; \
+		br->curr = br->size; \
+		return 0; \
+	} \
 	v = ((const br_ ## _bits *)(br->rstart + br->curr))->v; \
 	if (_bswap) \
 		v = bswap_ ## _bits (v); \
@@ -155,6 +161,7 @@ static inline void br_setup_common(struct blob_region *br, size_t size, enum blo
 	}
 
 	br->curr = 0;
+	br->overflow = false;
 }
 
 static inline void br_wsetup(struct blob_region *br, void *data, size_t size, enum blob_endian_type endian)
@@ -174,6 +181,13 @@ static inline void br_rsetup(struct blob_region *br, const void *data, size_t si
 static inline void br_reset(struct blob_region *br)
 {
 	br->curr = 0;
+	br->overflow = false;
+}
+
+/* true when a read tried to go past the end of the region */
+static inline bool br_roverflow(const struct blob_region *br)
+{
+	return br->overflow;
 }
 
 static inline size_t br_curr(struct blob_region *br)
@@ -301,6 +315,12 @@ static inline size_t br_read(struct blob_region *br, void *data, size_t size)
 {
 	size_t pos;
 
+	if (br->curr > br->size || size > br->size - br->curr) {
+		br->overflow = true;
+		br->curr = br->size;
+		memset(data, 0, size);
+		return br->size;
+	}
 	memcpy(data, br->rstart + br->curr, size);
 	pos = br->curr;
 	br->curr += size;
@@ -309,11 +329,21 @@ static inline size_t br_read(struct blob_region *br, void *data, size_t size)
 
 static inline void br_rskip(struct blob_region *br, size_t size)
 {
+	if (br->curr > br->size || size > br->size - br->curr) {
+		br->overflow = true;
+		br->curr = br->size;
+		return;
+	}
 	br->curr += size;
 }
 
 static inline void br_rskip_to(struct blob_region *br, size_t offset)
 {
+	if (offset > br->size) {
+		br->overflow = true;
+		br->curr = br->size;
+		return;
+	}
 	br->curr = offset;
 }
 
