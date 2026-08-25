@@ -1651,10 +1651,10 @@ fy_parse_document_load_mapping(struct fy_parser *fyp, struct fy_document *fyd,
 						 fyep, &fyn_key, depthp);
 		fyep = NULL;
 
-		assert(fyn_key);
-
 		fyp_error_check(fyp, !rc, err_out_rc,
 				"fy_parse_document_load_node() failed");
+
+		assert(fyn_key);
 
 		/* if we don't allow duplicate keys */
 		if (!(fyd->parse_cfg.flags & FYPCF_ALLOW_DUPLICATE_KEYS)) {
