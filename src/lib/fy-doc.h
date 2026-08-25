@@ -43,7 +43,7 @@ static inline int fy_depth_limit(void)
  * The recursive document loader uses about this much stack for each
  * nesting level. It is a generous estimate; the real cost is lower.
  */
-#define FY_DOC_LOAD_STACK_PER_DEPTH	1024
+#define FY_DOC_LOAD_STACK_PER_DEPTH	2048
 
 /*
  * The highest depth that the recursive document loader can use without
