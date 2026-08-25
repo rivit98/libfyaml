@@ -1344,6 +1344,7 @@ static int packed_reflection_setup_blob(struct fy_reflection *rfl)
 	struct packed_reflect_backend *rflb;
 	struct blob_region Br;
 	int i, Tc, Dc;				// type count, decl count
+	uint64_t Tc64, Dc64;
 	enum blob_id_size Di, Ti, Si, Ci, Vi; 	// id sizes
 	br_rid_func Trf, Drf, Srf;
 	size_t Ts, Ds, Ss;
@@ -1383,14 +1384,37 @@ static int packed_reflection_setup_blob(struct fy_reflection *rfl)
 	Ti = br_r8(&Br);
 	Di = br_r8(&Br);
 	Si = br_r8(&Br);
+	RFL_ERROR_CHECK(Ti <= BID_U64 && Di <= BID_U64 && Si <= BID_U64,
+			"packed: Illegal blob id sizes");
+
 	br_rskip_to(&Br, 0x10);
-	Tc = br_r64(&Br);
+	Tc64 = br_r64(&Br);
 	Ts = br_r64(&Br);
-	Dc = br_r64(&Br);
+	Dc64 = br_r64(&Br);
 	Ds = br_r64(&Br);
 	Ss = br_r64(&Br);
 
 	br_rskip_to(&Br, PGHDR_SIZE);
+
+	RFL_ERROR_CHECK(!br_roverflow(&Br),
+			"packed: Truncated blob header");
+
+	/* the counts index the expanded arrays */
+	RFL_ERROR_CHECK(Tc64 <= INT_MAX && Dc64 <= INT_MAX,
+			"packed: Illegal blob type or decl count");
+
+	/* the three regions follow the header, in order */
+	RFL_ERROR_CHECK(Ts <= rflb->blob_size - PGHDR_SIZE &&
+			Ds <= rflb->blob_size - PGHDR_SIZE - Ts &&
+			Ss <= rflb->blob_size - PGHDR_SIZE - Ts - Ds,
+			"packed: Illegal blob region sizes");
+
+	/* every entry occupies at least one octet of its region */
+	RFL_ERROR_CHECK(Tc64 <= Ts && Dc64 <= Ds,
+			"packed: Blob type or decl count exceeds its region");
+
+	Tc = (int)Tc64;
+	Dc = (int)Dc64;
 
 	// fprintf(stderr, "<Tc=%d Dc=%d \n", Tc, Dc);
 
@@ -1485,8 +1509,12 @@ static int packed_reflection_setup_blob(struct fy_reflection *rfl)
 		declp->comment.offset = Srf(&Br);
 	}
 
+	RFL_ERROR_CHECK(!br_roverflow(&Br),
+			"packed: Truncated blob body");
+
 	/* it must be consumed completely */
-	RFL_ASSERT(br_curr(&Br) == PGHDR_SIZE + Ts + Ds);
+	RFL_ERROR_CHECK(br_curr(&Br) == PGHDR_SIZE + Ts + Ds,
+			"packed: Blob body is not consumed completely");
 
 	rflb->gen_type_info.uses_pointers = false;
 	rflb->gen_type_info.types = rflb->gen_types;
