@@ -25,11 +25,17 @@
 #include <sys/types.h>
 #include <sys/mman.h>
 #include <fcntl.h>
+#include <sys/resource.h>
+#include <pthread.h>
 #endif
 
 #if defined(__APPLE__)
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#endif
+
+#if defined(__FreeBSD__) || defined(__OpenBSD__)
+#include <pthread_np.h>
 #endif
 
 #include "fy-win32.h"
@@ -1757,4 +1763,126 @@ int fy_fallocate(int fd, off_t offset, off_t len)
 	(void)fd; (void)offset; (void)len;
 	return ENOSYS;
 #endif
+}
+
+#if defined(__linux__) || defined(__NetBSD__) || defined(__DragonFly__) || defined(__FreeBSD__)
+static size_t fy_stack_size_attr_getstack(void)
+{
+	size_t size;
+	int rc;
+	pthread_attr_t attr;
+	bool got_attr;
+	void *stack_addr;
+	size_t stack_size;
+
+	size = 0;
+	got_attr = false;
+
+#if defined(__linux__) || defined(__NetBSD__) || defined(__DragonFly__)
+	rc = pthread_getattr_np(pthread_self(), &attr);
+#else
+	pthread_attr_init(&attr);
+	pthread_attr_get_np(pthread_self(), &attr);
+#endif
+	if (rc)
+		goto out;
+	got_attr = true;
+
+	rc = pthread_attr_getstack(&attr, &stack_addr, &stack_size);
+	if (rc)
+		goto out;
+
+	size = stack_size;
+out:
+	if (got_attr)
+		pthread_attr_destroy(&attr);
+	return size;
+}
+#endif
+
+#if defined( __APPLE__)
+static size_t fy_stack_size_get_stacksize(void)
+{
+	return (size_t)pthread_get_stacksize_np(pthread_self());
+}
+#endif
+
+#if defined(_WIN32)
+static size_t fy_stack_size_win32(void)
+{
+	ULONG_PTR low, high;
+	size_t size;
+
+	GetCurrentThreadStackLimits(&low, &high);
+
+	size = (size_t)(high - low);
+
+	return size;
+}
+#endif
+
+#if defined(__OpenBSD__)
+static size_t fy_stack_size_stackseg(void)
+{
+        stack_t sinfo;
+	size_t size;
+        int rc;
+
+        rc = pthread_stackseg_np(pthread_self(), &sinfo);
+        if (rc)
+                return 0;
+
+        size = (size_t)sinfo.ss_size;
+	return size;
+}
+#endif
+
+#if !defined(_WIN32)
+static size_t fy_stack_size_rlimit(void)
+{
+	struct rlimit rl;
+	size_t size;
+	int rc;
+
+	size = 0;
+	rc = getrlimit(RLIMIT_STACK, &rl);
+	if (rc)
+		goto out;
+
+	if (rl.rlim_cur == RLIM_INFINITY)
+		goto out;
+
+	size = (size_t)rl.rlim_cur;
+out:
+	return size;
+}
+#endif
+
+size_t fy_stack_size(void)
+{
+	size_t size;
+
+#if defined(__linux__) || defined(__NetBSD__) || defined(__DragonFly__) || defined(__FreeBSD__)
+	size = fy_stack_size_attr_getstack();
+#elif defined(__APPLE__)
+	size = fy_stack_size_get_stacksize();
+#elif defined(_WIN32)
+	size = fy_stack_size_win32();
+#elif defined(__OpenBSD__)
+	size = fy_stack_size_stackseg();
+#else
+	size = 0;
+#endif
+	if (size)
+		return size;
+
+#if !defined(_WIN32)
+	/* rlimit fallback */
+	size = fy_stack_size_rlimit();
+	if (size)
+		return size;
+#endif
+
+	/* nothing worked */
+	return 0;
 }

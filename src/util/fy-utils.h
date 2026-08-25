@@ -287,4 +287,7 @@ void *fy_mmap(void *addr, size_t len, int prot, unsigned int flags,
 	      int fd, off_t offset);
 int fy_munmap(void *addr, size_t len);
 
+/* portable way to find size of the current thread's stack */
+size_t fy_stack_size(void);
+
 #endif
