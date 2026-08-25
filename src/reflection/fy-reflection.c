@@ -1163,6 +1163,9 @@ char *fy_type_generate_c_declaration(struct fy_type *ft, const char *field, unsi
 		type_kind = ftd->type_kind;
 		tki = fy_type_kind_info_get_internal(type_kind);
 		if (fy_type_kind_has_prefix(type_kind)) {
+			/* a corrupt import can leave the type without a decl */
+			if (!decld)
+				goto err_out;
 			type_prefix = tki->name;
 			type_name = decld->name;
 
@@ -1172,6 +1175,8 @@ char *fy_type_generate_c_declaration(struct fy_type *ft, const char *field, unsi
 			type_prefix = NULL;
 			type_name = tki->name;
 		} else if (type_kind == FYTK_TYPEDEF) {
+			if (!decld)
+				goto err_out;
 			type_prefix = NULL;
 			type_name = decld->name;
 		} else if (type_kind == FYTK_FUNCTION) {
