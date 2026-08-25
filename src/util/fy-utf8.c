@@ -270,7 +270,7 @@ int fy_utf8_parse_escape(const char **strp, size_t len, enum fy_utf8_escape esc)
 	const char *s, *e;
 	char c;
 	int i, value, code_length, cc, w;
-	unsigned int hi_surrogate, lo_surrogate;
+	unsigned int hi_surrogate, lo_surrogate, uvalue;
 
 	/* why do you bother us? */
 	if (esc == fyue_none)
@@ -416,43 +416,49 @@ int fy_utf8_parse_escape(const char **strp, size_t len, enum fy_utf8_escape esc)
 	if (!code_length || code_length > (e - s))
 		goto out;
 
-	value = 0;
+	uvalue = 0;
 	for (i = 0; i < code_length; i++) {
 		c = *s++;
-		value <<= 4;
+		uvalue <<= 4;
 		if (c >= '0' && c <= '9')
-			value |= c - '0';
+			uvalue |= c - '0';
 		else if (c >= 'a' && c <= 'f')
-			value |= 10 + c - 'a';
+			uvalue |= 10 + c - 'a';
 		else if (c >= 'A' && c <= 'F')
-			value |= 10 + c - 'A';
+			uvalue |= 10 + c - 'A';
 		else
 			goto out;
 	}
 
 	/* hi/lo surrogate pair */
-	if (code_length == 4 && value >= 0xd800 && value <= 0xdbff &&
+	if (code_length == 4 && uvalue >= 0xd800 && uvalue <= 0xdbff &&
 		(e - s) >= 6 && s[0] == '\\' && s[1] == 'u') {
-		hi_surrogate = value;
+		hi_surrogate = uvalue;
 
 		s += 2;
 
-		value = 0;
+		uvalue = 0;
 		for (i = 0; i < code_length; i++) {
 			c = *s++;
-			value <<= 4;
+			uvalue <<= 4;
 			if (c >= '0' && c <= '9')
-				value |= c - '0';
+				uvalue |= c - '0';
 			else if (c >= 'a' && c <= 'f')
-				value |= 10 + c - 'a';
+				uvalue |= 10 + c - 'a';
 			else if (c >= 'A' && c <= 'F')
-				value |= 10 + c - 'A';
+				uvalue |= 10 + c - 'A';
 			else
 				return -1;
 		}
-		lo_surrogate = value;
-		value = 0x10000 + (hi_surrogate - 0xd800) * 0x400 + (lo_surrogate - 0xdc00);
+		lo_surrogate = uvalue;
+		uvalue = 0x10000 + (hi_surrogate - 0xd800) * 0x400 + (lo_surrogate - 0xdc00);
 	}
+
+	/* out of the code point range, or a lone surrogate */
+	if (uvalue > 0x10ffff)
+		goto out;
+
+	value = (int)uvalue;
 
 out:
 	*strp = s;
