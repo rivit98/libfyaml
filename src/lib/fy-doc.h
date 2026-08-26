@@ -46,6 +46,12 @@ static inline int fy_depth_limit(void)
 #define FY_DOC_LOAD_STACK_PER_DEPTH	2048
 
 /*
+ * Multiplier applied to the per-depth estimate when running under ASAN,
+ * where each recursion frame carries much larger overhead.
+ */
+#define FY_DOC_LOAD_STACK_PER_DEPTH_ASAN_MULT	4
+
+/*
  * The highest depth that the recursive document loader can use without
  * a stack overflow. FYPCF_DISABLE_DEPTH_LIMIT raises the limit to this
  * value, it does not remove it.

@@ -28,15 +28,20 @@
 
 int fy_depth_limit_max(void)
 {
-	size_t stack_size, tmp_depth;
+	size_t stack_size, per_depth, tmp_depth;
 	int depth, depth_limit;
 
 	stack_size = fy_stack_size();
 	if (!stack_size)
 		stack_size = 1U << 20;	/* assume a small 1MB stack */
 
+	/* estimate including asan overhead */
+	per_depth = FY_DOC_LOAD_STACK_PER_DEPTH;
+	if (fy_is_asan_enabled())
+		per_depth *= FY_DOC_LOAD_STACK_PER_DEPTH_ASAN_MULT;
+
 	/* keep half of the stack for everything else */
-	tmp_depth = (stack_size / 2) / FY_DOC_LOAD_STACK_PER_DEPTH;
+	tmp_depth = (stack_size / 2) / per_depth;
 	if (tmp_depth > INT_MAX)
 		tmp_depth = INT_MAX;
 
