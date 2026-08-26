@@ -204,8 +204,22 @@ fy_is_asan_enabled(void)
 #if defined(__clang__) || defined(__GNUC__)
 #ifdef __SANITIZE_ADDRESS__
 	return true;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+	return true;
+#else
+	return false;
+#endif
+#else
+	/*
+	 * On Apple a plain weak reference to an undefined symbol does not
+	 * resolve to NULL, it must be a weak_import; elsewhere use weak.
+	 */
+#if defined(__APPLE__)
+	extern void __asan_init(void) __attribute__((weak_import));
 #else
 	extern void __asan_init(void) __attribute__((weak));
+#endif
 	return __asan_init != NULL;
 #endif
 #else
