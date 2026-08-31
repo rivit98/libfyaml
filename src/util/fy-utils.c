@@ -946,11 +946,15 @@ uint64_t fy_iovec_xxhash64(const struct iovec *iov, int iovcnt)
 
 	if (iovcnt == 1) {
 		/* for the common case this is much faster for small inputs */
-		hash = XXH64(iov[0].iov_base, iov[0].iov_len, FY_XXHASH64_SEED);
+		hash = XXH64(iov[0].iov_len ? iov[0].iov_base : "",
+			     iov[0].iov_len, FY_XXHASH64_SEED);
 	} else {
 		XXH64_reset(&xxstate, FY_XXHASH64_SEED);
-		for (i = 0; i < iovcnt; i++)
+		for (i = 0; i < iovcnt; i++) {
+			if (!iov[i].iov_len)
+				continue;
 			XXH64_update(&xxstate, iov[i].iov_base, iov[i].iov_len);
+		}
 		hash = XXH64_digest(&xxstate);
 	}
 
