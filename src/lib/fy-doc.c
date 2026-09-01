@@ -3618,7 +3618,9 @@ bool fy_node_is_null(struct fy_node *fyn)
 	if (fyn->type != FYNT_SCALAR)
 		return false;
 
-	return fyn->scalar == NULL || fyn->scalar->scalar.is_null;
+	/* an alias token has no scalar union member; it is never null */
+	return fyn->scalar == NULL ||
+	       (fyn->scalar->type == FYTT_SCALAR && fyn->scalar->scalar.is_null);
 }
 
 bool fy_node_is_attached(struct fy_node *fyn)
