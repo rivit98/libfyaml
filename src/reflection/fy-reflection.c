@@ -2153,14 +2153,6 @@ int fy_type_fixup(struct fy_type *ft)
 		goto out;
 	}
 
-	/* special handling for empty structs/unions */
-	if (fy_type_kind_is_record(type_kind)) {
-		decl = fy_type_decl(ft);
-		if (fy_decl_list_empty(&decl->children)) {
-			/* nothing */
-		}
-	}
-
 	/* for the rest, if size, align are set don't try again */
 	if (ft->size && ft->align)
 		goto out;
