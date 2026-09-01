@@ -8790,14 +8790,14 @@ struct fy_eventp *fy_parser_event_resolve_hook_merge_key_start(struct fy_parser 
 
 	/* OK, trim mapping start and end */
 	fyep_next = fy_eventp_list_head(&fysa->events);
-	fyp_error_check(fyp, fyep_next->e.type == FYET_MAPPING_START, err_out,
+	fyp_error_check(fyp, fyep_next && fyep_next->e.type == FYET_MAPPING_START, err_out,
 			"not a mapping merge key start");
 	fy_eventp_list_del(&fysa->events, fyep_next);
 	fy_eventp_free(fyep_next);
 	fyep_next = NULL;
 
 	fyep_next = fy_eventp_list_tail(&fysa->events);
-	fyp_error_check(fyp, fyep_next->e.type == FYET_MAPPING_END, err_out,
+	fyp_error_check(fyp, fyep_next && fyep_next->e.type == FYET_MAPPING_END, err_out,
 			"not a mapping merge key end");
 	fy_eventp_list_del(&fysa->events, fyep_next);
 	fy_eventp_free(fyep_next);
