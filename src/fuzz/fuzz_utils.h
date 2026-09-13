@@ -16,10 +16,6 @@
 #include "fuzz_flags.h"
 
 
-#if !defined(__has_embed)
-#error "the fuzz harness needs a compiler with C23 #embed (clang 19+, gcc 15+)"
-#endif
-
 static const char corpus_yaml[] = {
 #embed "corpus.yaml" suffix(,)
   '\0'
@@ -28,31 +24,6 @@ static const char corpus_yaml[] = {
 #define CORPUS_YAML     corpus_yaml
 #define CORPUS_YAML_LEN (sizeof(corpus_yaml) - 1)
 
-/*
- * The corpus fixture.
- *
- * corpus.yaml is a fixture, not a parser test input - the tests below care
- * about what they can do to a big well-formed document, not about how it got
- * parsed. Rebuilding it per run cost 12-24 ms under ASAN, and with four tests
- * each wanting their own copy that was ~74 ms of a ~109 ms exec. So it is
- * parsed exactly once per process, with a fixed flag set:
- *
- *   FYPCF_QUIET            - no diagnostics for a document we know parses
- *   FYPCF_RESOLVE_DOCUMENT - aliases resolved, so paths reach through them
- *   FYPCF_KEEP_COMMENTS    - comments attached, so token accessors find some
- *
- * Dropping the fuzzed parse flags here costs nothing. The parser still gets
- * them every run from test_parse_with_flags(), test_fy_parser_parse(),
- * test_document_builder() and the rest, which parse fuzzer-controlled input;
- * and running one constant document through the flag space saturates after a
- * few thousand execs, after which it is pure overhead. It also stops throwing
- * runs away: the flag seed picks FYPCF_JSON_FORCE one time in three, the
- * corpus cannot be JSON, and every reader used to bail - measured at 29% of
- * seeds.
- *
- * The one thing this gives up: a bug that only fires against a cold document
- * is now hit once per process instead of once per run.
- */
 static struct fy_document *corpus_fyd = NULL;
 static bool corpus_fyd_built = false;
 
@@ -73,30 +44,6 @@ static struct fy_document *corpus_document(void)
   return corpus_fyd;
 }
 
-/*
- * A private copy for tests that restructure the document. fy_node_copy() deep
- * copies nodes, so appends, prepends, removals, sorts and inserts stay local
- * to the clone - verified: a removal on a clone is not visible in the source.
- *
- * It does NOT copy tokens, it fy_token_ref()s them, so anything that writes to
- * a token - fy_token_set_comment() above all - would write straight through
- * into the fixture and must build its own document instead.
- *
- * Caller destroys. Falls back to a parse because fy_node_copy() refuses to
- * descend past FY_NODE_PATH_WALK_DEPTH_DEFAULT (16) levels.
- */
-static struct fy_document *corpus_document_private(struct flags_t *flags)
-{
-  struct fy_document *fyd;
-
-  fyd = fy_document_clone(corpus_document());
-  if (fyd)
-    return fyd;
-
-  struct fy_parse_cfg cfg = { .flags = flags->parse_flags };
-  return fy_document_build_from_string(&cfg, CORPUS_YAML, CORPUS_YAML_LEN);
-}
-
 __attribute__((destructor)) static void corpus_document_free(void)
 {
   fy_document_destroy(corpus_fyd);
@@ -104,45 +51,31 @@ __attribute__((destructor)) static void corpus_document_free(void)
   corpus_fyd_built = false;
 }
 
-/*
- * A small feature-dense document for test_token_comments(). It rewrites token
- * comments, which a clone would push through into the fixture (see above), so
- * it needs a document of its own - and a small one keeps that parse off the
- * hot path at ~0.5 ms instead of the corpus' 12-24 ms. Parsed with the run's
- * flags, so a valid document still goes through the fuzzed flag space on every
- * single exec.
- */
-static const char corpus_tokens_yaml[] =
-  "# leading comment\n"
-  "plain: a plain scalar   # trailing comment\n"
-  "single: 'single quoted'\n"
-  "double: \"double \\t quoted\"\n"
-  "literal: |\n"
-  "  block\n"
-  "  scalar\n"
-  "folded: >-\n"
-  "  folded\n"
-  "  scalar\n"
-  "tagged: !!str 42\n"
-  "anchored: &a anchored value\n"
-  "alias: *a\n"
-  "ints: [0, -1, 0x1F, 1_000]\n"
-  "floats: [1.5, .inf, .NaN]\n"
-  "consts: [true, false, null, ~]\n"
-  "empty:\n"
-  "nested:\n"
-  "  # inner comment\n"
-  "  key: value\n"
-  "  seq:\n"
-  "    - one\n"
-  "    - two\n"
-  "? complex key\n"
-  ": complex value\n";
-
-#define CORPUS_TOKENS_YAML     corpus_tokens_yaml
-#define CORPUS_TOKENS_YAML_LEN (sizeof(corpus_tokens_yaml) - 1)
-
 #define CHECK(cond) do { if (!(cond)) goto out; } while(0)
+
+/*
+ * Consume a value the harness does not inspect - and keep the call that
+ * produced it.
+ *
+ * Much of libfyaml's API is `static inline` in the public headers
+ * (libfyaml-core.h, -reflection.h, and nearly all of -generic.h). A call whose
+ * result is discarded can be deleted outright at -O2, taking its coverage and
+ * its sanitizer checks with it - the accessor sweeps below exist precisely to
+ * run those functions, so losing them loses the test.
+ *
+ * A `(void)` cast does NOT prevent that; measured on clang -O2, both a bare
+ * call and a cast one compile to a lone `ret`. An asm operand does: the value
+ * has to be materialised in memory for the (empty) asm statement, so the call
+ * cannot be folded away. "+m" keeps it local - no memory clobber, so the code
+ * around it still optimises normally.
+ *
+ * Only for value-returning calls; a void function has nothing to sink (and
+ * nothing to delete either, unless it is side-effect free, in which case there
+ * is nothing to test).
+ */
+#define USE(expr) \
+  do { __typeof__(expr) _use_tmp = (expr); __asm__ volatile("" : "+m"(_use_tmp)); } while (0)
+
 
 /*
  * Build the allocator named by a recipe (see fy_alloc_recipes[] in
@@ -235,15 +168,19 @@ static void make_recipe_allocator_free(struct fy_allocator *a, struct fy_allocat
 void dump_testsuite_event(struct fy_parser *fyp,
 			  struct fy_event *fye)
 {
-	const char *anchor = NULL;
-	const char *tag = NULL;
-	const char *text = NULL;
-	const char *alias = NULL;
+	/* The token texts below are fetched, not printed: the point is to make
+	 * the library produce them, so every accessor runs under the
+	 * sanitizers. Nothing here reads them back. */
+	const char *anchor __attribute__((unused)) = NULL;
+	const char *tag __attribute__((unused)) = NULL;
+	const char *text __attribute__((unused)) = NULL;
+	const char *alias __attribute__((unused)) = NULL;
 	size_t anchor_len = 0, tag_len = 0, text_len = 0, alias_len = 0;
-	const struct fy_mark *sm, *em = NULL;
 
-	sm = fy_event_start_mark(fye);
-	em = fy_event_end_mark(fye);
+	(void)fyp;
+
+	USE(fy_event_start_mark(fye));
+	USE(fy_event_end_mark(fye));
 
 	switch (fye->type) {
 	case FYET_NONE:
@@ -352,11 +289,6 @@ bool split_two_parts(const char *data, size_t size,
   return true;
 }
 
-void print_artifact_as_hexstr(char *buf, size_t buf_size) {
-  for (size_t i = 0; i < buf_size; i++)
-    printf("\\x%02x", (unsigned char)buf[i]);
-}
-
 void sprintf_artifact_as_hexstr(char *out, size_t out_size,
                               const char *buf, size_t buf_size)
 {
@@ -378,19 +310,6 @@ void sprintf_artifact_as_hexstr(char *out, size_t out_size,
         out[pos] = '\0';
     else
         out[out_size - 1] = '\0';
-}
-
-char *read_file(const char *filename, size_t *out_size) {
-  FILE *fp = fopen(filename, "r");
-  if (!fp) {
-    perror("fopen");
-    exit(1);
-  }
-  char *buf = malloc(0x10000);
-  int n = fread(buf, 1, 0x10000, fp);
-  fclose(fp);
-  *out_size = n;
-  return buf;
 }
 
 /*
@@ -431,10 +350,6 @@ int read_artifact_raw(const char *filename, char **out_buf) {
   return (int)size;
 }
 
-int read_artifact(const char *filename, char **out_buf) {
-  return read_artifact_raw(filename, out_buf);
-}
-
 /*
  * The T() trampoline. Every T() test case gets @data as a private copy of the
  * input, NUL terminated at data[size] and freed once the test returns - so a
@@ -458,6 +373,14 @@ int tc(struct flags_t *flags, const uint8_t *data, size_t size, void (*f)(struct
  * afterwards the decision is a byte load. When TC is unset the whole thing
  * collapses to a single (never taken) branch on a hot global.
  */
+/*
+ * Set by G() while a group runs: true when TC= named this group (or named
+ * nothing), which means every member of it runs. False when TC= named
+ * something else - then each member checks its own name, so TC= can still
+ * select one test case inside a group.
+ */
+bool tc_group_all = true;
+
 #define TC_SKIP(func) ({ \
   static signed char _tc_sel = -1; \
   bool _tc_skip = false; \
@@ -466,7 +389,7 @@ int tc(struct flags_t *flags, const uint8_t *data, size_t size, void (*f)(struct
       _tc_sel = strcmp(tc_filter, #func) == 0; \
       tc_filter_matched |= (bool)_tc_sel; \
     } \
-    _tc_skip = !_tc_sel; \
+    _tc_skip = !_tc_sel && !tc_group_all; \
   } \
   _tc_skip; \
 })
@@ -512,8 +435,40 @@ static double now_ms(void)
   fprintf(stderr, "=== %s: %.3f ms ===\n", #func, now_ms() - _t0); \
 } while(0)
 
-#define T(func)  T_RUN(func, tc(flags, data, size, func))
-#define T2(func) T_RUN(func, func(flags, data, size))
+#define T(func)  T_RUN(func, tc(flags, (const uint8_t *)(data), size, func))
+#define T2(func) T_RUN(func, func(flags, (const char *)(data), size))
+
+/*
+ * A test group: the unit TC= selects, and the unit fuzzer/seeds/<group>/ is
+ * built for. Members inside it are dispatched with BRANCH()/BRANCH2(), which
+ * are T()/T2() - a private NUL-terminated copy, or the raw buffer.
+ *
+ * The group is entered even when TC= names something else, because what it
+ * names may be one of the members; tc_group_all tells the members whether to
+ * run unconditionally or to check their own name. A group whose members all
+ * skip costs a call and nothing else.
+ */
+#define G(func) do { \
+  static signed char _g_sel = -1; \
+  if (__builtin_expect(tc_filter != NULL, 0)) { \
+    if (__builtin_expect(_g_sel < 0, 0)) { \
+      _g_sel = strcmp(tc_filter, #func) == 0; \
+      tc_filter_matched |= (bool)_g_sel; \
+    } \
+    tc_group_all = (bool)_g_sel; \
+  } \
+  /* Under VERBOSE, a group that is only being entered so its members can
+     check their own names has nothing to announce - the member that matches
+     announces itself. */ \
+  if (__builtin_expect(!verbose, 1) || !tc_group_all) { \
+    func(flags, (const char *)(data), size); \
+  } else { \
+    fprintf(stderr, "=== Running %s ===\n", #func); \
+    double _t0 = now_ms(); \
+    func(flags, (const char *)(data), size); \
+    fprintf(stderr, "=== %s: %.3f ms ===\n", #func, now_ms() - _t0); \
+  } \
+} while (0)
 
 /*
  * The sink for everything the harness emits and never reads back:
@@ -556,3 +511,124 @@ __attribute__((constructor)) void init_common() {
     exit(1);
   }
 }
+
+
+#if defined REPRODUCER
+
+#include <dlfcn.h>
+
+/*
+ * The non-engine entry point, shared by both binaries built without a fuzzing
+ * engine: fuzz2 (the RR()/RF() reproducer, asan+ubsan) and fuzz_cov
+ * (coverage). Both need a main() of their own - there is no driver to supply
+ * one - and both want the same two behaviours, so the logic lives here once.
+ *
+ *   ./fuzz2 <artifact>          run one input through the harness
+ *   ./fuzz2 tc3 / vc3           run a harvested test case
+ *   ./fuzz_cov <file> [...]     the same replay, for llvm-cov
+ *
+ * An argument that can be opened is an input; anything else is looked up as a
+ * test case name. Test cases are identifiers (vc<n>, tc<n>), so the two can
+ * never be confused for one another.
+ */
+int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
+
+/*
+ * Run one input file through the harness. The buffer is a private copy, freed
+ * here, so the harness sees exactly what the fuzzer would have handed it - and
+ * the sanitizers see the same allocation lifetime.
+ *
+ * Returns -1 when @path cannot be opened or is not a regular file; that is the
+ * caller's signal to try the argument as a test case name. A directory would
+ * otherwise fopen() happily and then hand ftell() a nonsense size.
+ */
+int run_input_file(const char *path) {
+  unsigned char *buf;
+  struct stat st;
+  long size;
+  FILE *f;
+
+  f = fopen(path, "rb");
+  if (!f)
+    return -1;
+
+  if (fstat(fileno(f), &st) != 0 || !S_ISREG(st.st_mode)) {
+    fclose(f);
+    return -1;
+  }
+
+  if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) < 0) {
+    fclose(f);
+    return -1;
+  }
+  rewind(f);
+
+  buf = malloc((size_t)size + 1);
+  if (!buf) {
+    fclose(f);
+    return -1;
+  }
+
+  if (size > 0 && fread(buf, 1, (size_t)size, f) != (size_t)size) {
+    free(buf);
+    fclose(f);
+    return -1;
+  }
+  fclose(f);
+
+  LLVMFuzzerTestOneInput(buf, (size_t)size);
+  free(buf);
+  return 0;
+}
+
+/*
+ * Call a test case by name - the vc<n>/tc<n> functions the RR()/RF() macros
+ * define. dlsym against the executable itself, which is what -rdynamic in
+ * fuzz_add_harness() is for.
+ */
+int run_test_case(const char *name) {
+  void *handle, *sym;
+
+  handle = dlopen(NULL, RTLD_NOW);
+  if (!handle) {
+    printf("dlopen failed: %s\n", dlerror());
+    return 1;
+  }
+
+  sym = dlsym(handle, name);
+  if (!sym) {
+    printf("dlsym failed: %s\n", dlerror());
+    dlclose(handle);
+    return 1;
+  }
+  dlclose(handle);
+
+  return ((int (*)())sym)();
+}
+
+/*
+ * Walk argv: inputs are replayed in order, a name that is not a file runs as a
+ * test case and its return value ends the run (vc<n> prints the RF() text,
+ * tc<n> is expected to crash).
+ */
+int fuzz_replay_main(int argc, char **argv) {
+  int i, n = 0;
+
+  if (argc < 2) {
+    printf("Usage: %s <input-file>... | <testcase>\n", argv[0]);
+    return 1;
+  }
+
+  for (i = 1; i < argc; i++) {
+    if (run_input_file(argv[i]) == 0) {
+      n++;
+      continue;
+    }
+    return run_test_case(argv[i]);
+  }
+
+  fprintf(stderr, "%s: ran %d input(s)\n", argv[0], n);
+  return 0;
+}
+
+#endif /* REPRODUCER */

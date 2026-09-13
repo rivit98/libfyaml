@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <stdarg.h>
 #include <assert.h>
 
@@ -70,7 +71,7 @@ void __print__flags(uint64_t flags, uint64_t *flags_vals, const char** flags_des
     strcat(buffer, "None");
   }
 
-  printf("%s: 0x%x %s\n", prefix, flags, buffer);
+  printf("%s: 0x%" PRIx64 " %s\n", prefix, (uint64_t)flags, buffer);
 }
 
 /*
@@ -624,7 +625,7 @@ void setup_flags(uint32_t seed, struct flags_t *flags) {
       | FYEXCF_OUTPUT_FILENAME
     );
 
-  flags->primitive_type = primitive_type_names[rand64() % array_elements(primitive_type_names)];
+  flags->primitive_type = (char *)primitive_type_names[rand64() % array_elements(primitive_type_names)];
 
   flags->type_info_flags = flags_from_seed(rand64(), fy_type_info_flags__vals, array_elements(fy_type_info_flags__vals));
   flags->cgen_flag = cgen_flag_combos[rand64() % array_elements(cgen_flag_combos)];
@@ -931,7 +932,7 @@ char *flags_to_struct_string(struct flags_t *flags)
 		   fy_alloc_recipes[flags->allocator_recipe].desc);
 
 	append_str(&p, &left, "  .node_style = ");
-	if (flags->node_style < array_elements(fy_node_style__vals))
+	if ((size_t)flags->node_style < array_elements(fy_node_style__vals))
 		append_str(&p, &left, fy_node_style__desc[flags->node_style]);
 	else
 		append_fmt(&p, &left, "%u", (unsigned)flags->node_style);
